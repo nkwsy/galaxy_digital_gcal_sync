@@ -8,7 +8,16 @@ from datetime import date, datetime, time
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import AnyUrl, BaseModel, EmailStr, Field
+from pydantic import BaseModel as PydanticBaseModel,validator, AnyUrl, EmailStr, Field
+
+class BaseModel(PydanticBaseModel):
+    @validator('*', pre=True)
+    def empty_str_to_none(cls, v):
+        if v == '':
+            return None
+        elif v == '0000-00-00':
+            return None
+        return v
 
 
 class UgStatus(Enum):

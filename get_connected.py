@@ -7,6 +7,7 @@ import model
 from datetime import datetime
 import pytz
 from loguru import logger
+import model
 
 logger.add("debug.log", format="{time} {level} {message}", rotation="5 MB")
 load_dotenv()
@@ -124,6 +125,11 @@ class GalaxyAPI:
         else:
             response.raise_for_status()  
 
+    def transform_objects(self, responce, model_class):
+        all_objects = []
+        for object in responce:
+            all_objects.append(model_class.parse_obj(object))
+        return all_objects
 # #TODO: sync with internal mongoDB
 # api_key = os.getenv('API_KEY')
 # email = os.getenv('EMAIL')
