@@ -9,7 +9,7 @@ import pytz
 from loguru import logger
 import model
 
-logger.add("debug.log", format="{time} {level} {message}", rotation="5 MB")
+logger.add("debug.log", format="{time} {level} {message}", retention="1 week", rotation="10 MB")
 load_dotenv()
 
 class GalaxyAPI:
@@ -64,8 +64,8 @@ class GalaxyAPI:
                 all_data.extend(data.get('data'))  # If the response was successful, no Exception will be raised
                 records += len(data.get('data'))
                 page_return = len(data.get('data'))
-                logger.debug(f"Page: {page_return}, Records: {records}")
-                logger.info(f"Data: {data.get('data')}")
+                # logger.debug(f"Page: {page_return}, Records: {records}")
+                # logger.info(f"Data: {data.get('data')}")
                 if page_return != 150:
                     logger.debug(f"Fin Page: {page_return}, Records: {records}")
                     return all_data

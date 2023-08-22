@@ -19,6 +19,40 @@ class BaseModel(PydanticBaseModel):
             return None
         return v
 
+#Custom Types
+
+class CustomUserObject(BaseModel):
+    id: Optional[str] = None
+    domain_id: Optional[str] = None
+    user_reference_id: Optional[str] = None
+    user_fname: Optional[str] = None
+    user_mname: Optional[str] = None
+    user_lname: Optional[str] = None
+    user_email: Optional[str] = None
+    user_phone: Optional[str] = None
+    user_phone_cell: Optional[str] = None
+    user_username: Optional[str] = None
+    user_address: Optional[str] = None
+    user_address2: Optional[str] = None
+    user_city: Optional[str] = None
+    user_state: Optional[str] = None
+    user_postal: Optional[str] = None
+    user_county: Optional[str] = None
+    user_country: Optional[str] = None
+    user_birthday: Optional[date] = None
+    user_company: Optional[str] = None
+    user_company_title: Optional[str] = None
+    user_department: Optional[str] = None
+    user_ethnicity: Optional[str] = None
+    user_gender: Optional[str] = None
+    user_grad_year: Optional[str] = None
+    user_notes: Optional[str] = None
+    user_comments: Optional[str] = None
+    user_status: Optional[str] = None
+    created_at: Optional[datetime] = Field(None, example='2021-01-01 12:00:00')
+    updated_at: Optional[datetime] = Field(None, example='2021-01-01 12:00:00')
+
+
 
 class UgStatus(Enum):
     active = 'active'
