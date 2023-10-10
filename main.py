@@ -6,7 +6,7 @@ import gcal
 from datetime import datetime
 import pytz
 from loguru import logger
-logger.add("debug.log", format="{time} {level} {message}", rotation="5 MB")
+logger.add("debug.log", format="{time} {level} {message}", level='ERROR', retention='2 days', rotation="5 MB")
 load_dotenv()
 
 #TODO: sync with internal mongoDB
