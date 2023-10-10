@@ -9,7 +9,7 @@ import pytz
 from loguru import logger
 import model
 
-logger.add("debug.log", format="{time} {level} {message}", retention="1 week", rotation="10 MB")
+logger.add("debug.log", format="{time} {level} {message}", level='ERROR', retention="1 week", rotation="10 MB")
 load_dotenv()
 
 class GalaxyAPI:
