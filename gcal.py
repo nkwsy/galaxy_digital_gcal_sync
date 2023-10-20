@@ -72,8 +72,9 @@ def update_calendar_events(shifts, service, calendar_id='primary', add_attendees
         }
         # Get the list of event attendees
         if add_attendees:
-            attendees = [{'email': user['user_email']} for user in shift['users']]
-            event['attendees'] = attendees
+            # attendees = [{'email': user['user_email']} for user in shift['users']]
+            # event['attendees'] = attendees
+            event['attendees'] = {'email': 'test@urbanriv.org'}
         else:
             event['description'] = create_attendees_list(shift['users'])
         # Check if event exists
