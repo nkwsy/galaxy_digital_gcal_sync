@@ -106,7 +106,7 @@ class GalaxyAPI:
         # return data
         tr = self.transform_responses(data)
         gcal.get_calendars(gcal.service)
-        gcal.update_calendar_events(tr, gcal.service, calendar_id=self.calendar_id)
+        gcal.update_calendar_events(tr, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
         logger.debug(f"updated_responses complete")
 
     def get_user_list(self, api_key, offset=0, limit=50):
