@@ -18,6 +18,7 @@ This project synchronizes events from Galaxy Digital to a Google Calendar. It au
   - [Configuration](#configuration)
   - [Usage](#usage)
   - [Setting Up as a Systemd Service](#setting-up-as-a-systemd-service)
+  - [Managing the Service](#managing-the-service)
 
 ## Features
 
@@ -95,5 +96,55 @@ chmod +x setup_galaxy_sync_service.sh
 ```bash
 sudo ./setup_galaxy_sync_service.sh
 ```
+
+## Managing the Service
+
+You can manage the `galaxy_sync.service` using standard `systemctl` commands:
+
+- **Start the Service**
+
+  ```bash
+  sudo systemctl start galaxy_sync.service
+  ```
+
+- **Stop the Service**
+
+  ```bash
+  sudo systemctl stop galaxy_sync.service
+  ```
+
+- **Restart the Service**
+
+  ```bash
+  sudo systemctl restart galaxy_sync.service
+  ```
+
+- **Check the Status of the Service**
+
+  ```bash
+  sudo systemctl status galaxy_sync.service
+  ```
+
+- **Enable the Service at Boot**
+
+  ```bash
+  sudo systemctl enable galaxy_sync.service
+  ```
+
+- **Disable the Service at Boot**
+
+  ```bash
+  sudo systemctl disable galaxy_sync.service
+  ```
+
+- **View Service Logs**
+
+  ```bash
+  sudo journalctl -u galaxy_sync.service
+  ```
+
+**Note**: Replace `galaxy_sync.service` with the name of your service file if it's different.
+
+This section allows you to control the service that runs your Galaxy Digital Google Calendar Sync script, ensuring it operates as expected and providing commands to troubleshoot if necessary.
 
 This will create and start a systemd service that runs the sync script at system startup.
