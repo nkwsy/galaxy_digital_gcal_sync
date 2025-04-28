@@ -37,6 +37,6 @@ def update_cal():
             fail_count += 1
             logger.error(f"failed: {fail_count}. {e}")
             post_to_slack(f"Galaxy_gcal_sync \n failed: {fail_count} sleeptime:{fail_count*60}.\n {e}")
-            time.sleep(fail_count * 6000)
+            time.sleep(fail_count * 60)
             pass
 update_cal()
