@@ -105,6 +105,9 @@ class GalaxyAPI:
         # print(response)
         # return data
         tr = self.transform_responses(data)
+        # Save transformed responses to JSON file
+        with open('transformed_responses.json', 'w') as f:
+            json.dump(tr, f, default=str)
         gcal.get_calendars(gcal.service)
         gcal.update_calendar_events(tr, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
         logger.debug(f"updated_responses complete")
