@@ -112,6 +112,55 @@ class GalaxyAPI:
         gcal.update_calendar_events(tr, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
         logger.debug(f"updated_responses complete")
 
+    def user_checkin_update(self):
+        with open('transformed_responses.json', 'r') as f:
+            tr = json.load(f)
+        shifts_to_update = []
+        for shift in tr:
+            current_time = datetime.now(pytz.timezone('America/Chicago'))
+            shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
+            time_diff = current_time - shift_start
+            if time_diff.total_seconds() <= 7200 and time_diff.total_seconds() >= 0:
+                for user in shift['users']:
+                    data = self.get_data_from_api(f'user/{user["id"]}/hours')
+                    if data['data'] is not None:
+                        for hour in data['data']:
+                            user['status'] = hour['hour_status']
+                shifts_to_update.append(shift)
+        if len(shifts_to_update) > 0:
+            logger.debug(f"Updating {len(shifts_to_update)} shifts")
+            logger.debug(f"shifts_to_update: {shifts_to_update}")
+            gcal.get_calendars(gcal.service)
+            gcal.update_calendar_events(shifts_to_update, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
+        return shifts_to_update
+    
+    def get_next_shift(self):
+        with open('transformed_responses.json', 'r') as f:
+            tr = json.load(f)
+        next_shift_time_diff = 0
+        for shift in tr:
+            current_time = datetime.now(pytz.timezone('America/Chicago'))
+            shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
+            time_diff = current_time - shift_start
+            if time_diff.total_seconds() > next_shift_time_diff:
+                next_shift_time_diff = time_diff.total_seconds()
+                next_shift = shift
+        return next_shift_time_diff
+    
+    def get_last_shift(self):
+        with open('transformed_responses.json', 'r') as f:
+            tr = json.load(f)
+        last_shift_time_diff = 0
+        for shift in tr:
+            current_time = datetime.now(pytz.timezone('America/Chicago'))
+            shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
+            time_diff = current_time - shift_start
+            if time_diff.total_seconds() > last_shift_time_diff:
+                last_shift_time_diff = time_diff.total_seconds()
+                last_shift = shift
+        return last_shift_time_diff
+            
+
     def get_user_list(self, api_key, offset=0, limit=50):
         url = 'https://volunteerapi.com/agencies'
         headers = {
