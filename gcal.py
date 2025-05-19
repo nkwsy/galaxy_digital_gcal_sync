@@ -35,10 +35,11 @@ def convert_to_iso(datetime_str):
 def create_attendees_list(users):
     attendees = 'Signups: \n'
     for user in users:
-        if user['status'] == 'pending':
-            attendees += f"🟡 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-        elif user['status'] == 'approved':
-            attendees += f"🟢 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
+        if 'status' in user:
+            if user['status'] == 'pending':
+                attendees += f"🟡 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
+            elif user['status'] == 'approved':
+                attendees += f"🟢 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
         else:
             attendees += f"🔴 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
     return attendees
@@ -62,7 +63,12 @@ def update_calendar_events(shifts, service, calendar_id='primary', add_attendees
     MAX_RETRIES = 5
     for shift in shifts:
         # Check to see if duration of shift is greater than 24 hours
-        time_delta = shift['end_time'] - shift['start_time']
+        if isinstance(shift['end_time'], str):
+            end_time = datetime.strptime(shift['end_time'], '%Y-%m-%d %H:%M:%S')
+            start_time = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S')
+            time_delta = end_time - start_time
+        else:
+            time_delta = shift['end_time'] - shift['start_time']
         if time_delta.days > 1:
             logger.error(f"Shift {shift['id']} is longer than 24 hours, skipping")
             continue

@@ -100,7 +100,10 @@ class GalaxyAPI:
         return list(shifts_dict.values())
 
     def update_responses(self):
-        data = self.get_data_from_api('responses')
+
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        data = self.get_data_from_api(f'responses?since_updated={current_date}')
+        # data = self.get_data_from_api('responses')
         # response = model.ResponseObject.parse_obj(data[3])
         # print(response)
         # return data
@@ -116,22 +119,53 @@ class GalaxyAPI:
         with open('transformed_responses.json', 'r') as f:
             tr = json.load(f)
         shifts_to_update = []
-        for shift in tr:
-            current_time = datetime.now(pytz.timezone('America/Chicago'))
-            shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
-            time_diff = current_time - shift_start
-            if time_diff.total_seconds() <= 7200 and time_diff.total_seconds() >= 0:
-                for user in shift['users']:
-                    data = self.get_data_from_api(f'user/{user["id"]}/hours')
-                    if data['data'] is not None:
-                        for hour in data['data']:
-                            user['status'] = hour['hour_status']
-                shifts_to_update.append(shift)
-        if len(shifts_to_update) > 0:
-            logger.debug(f"Updating {len(shifts_to_update)} shifts")
-            logger.debug(f"shifts_to_update: {shifts_to_update}")
-            gcal.get_calendars(gcal.service)
-            gcal.update_calendar_events(shifts_to_update, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
+        
+        try:
+            # Get current date in YYYY-MM-DD format
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            # Fetch all hours updated today in a single API call
+            hours_data = self.get_data_from_api(f'hours?since_updated={current_date}')
+            
+            # Create a mapping of user IDs to their hour status
+            user_status_map = {}
+            if hours_data is not None:
+                for hour in hours_data:
+                    if 'user' in hour and 'id' in hour['user']:
+                        user_id = hour['user']['id']
+                        hour_status = hour.get('hour_status', '')
+                        user_status_map[user_id] = hour_status
+            
+            for shift in tr:
+                current_time = datetime.now(pytz.timezone('America/Chicago'))
+                shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
+                time_diff = current_time - shift_start
+                if time_diff.total_seconds() <= 7200 and time_diff.total_seconds() >= 0:
+                    shift_updated = False
+                    for user in shift['users']:
+                        # Check if user ID is in our map of updated statuses
+                        if user['id'] in user_status_map:
+                            user['status'] = user_status_map[user['id']]
+                            shift_updated = True
+                    
+                    # Only add shifts that had users with updated statuses
+                    if shift_updated:
+                        shifts_to_update.append(shift)
+            
+            if len(shifts_to_update) > 0:
+                logger.debug(f"Updating {len(shifts_to_update)} shifts")
+                logger.debug(f"shifts_to_update: {shifts_to_update}")
+                
+                # Convert string datetime values to datetime objects before passing to gcal
+                for shift in shifts_to_update:
+                    if isinstance(shift['start_time'], str):
+                        shift['start_time'] = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S')
+                    if isinstance(shift['end_time'], str):
+                        shift['end_time'] = datetime.strptime(shift['end_time'], '%Y-%m-%d %H:%M:%S')
+                
+                gcal.get_calendars(gcal.service)
+                gcal.update_calendar_events(shifts_to_update, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
+        except Exception as e:
+            logger.error(f"Error updating checkin shifts: {e}")
         return shifts_to_update
     
     def get_next_shift(self):
