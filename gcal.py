@@ -41,7 +41,7 @@ def create_attendees_list(users):
             elif user['status'] == 'approved':
                 attendees += f"🟢 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
         else:
-            attendees += f"🔴 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
+            attendees += f"🔘 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
     return attendees
 
 #Hacky way to change the color of the event, https://lukeboyle.com/blog/posts/google-calendar-api-color-id

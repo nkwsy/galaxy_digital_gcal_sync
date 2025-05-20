@@ -5,6 +5,7 @@ import json
 import gcal
 import model
 from datetime import datetime
+import time
 import pytz
 from loguru import logger
 import model
@@ -42,23 +43,30 @@ class GalaxyAPI:
         else:
             response.raise_for_status()  # Raises stored HTTPError, if one occurred.
 
-    def get_data_from_api(self, url_path):
+    def get_data_from_api(self, url_path, additional_params=None):
         all_data = []
         records = 0
         page_return = 150
         headers = {
-        'Accept': 'application/json',
-        'Authorization': f"Bearer {self.token}",
+            'Accept': 'application/json',
+            'Authorization': f"Bearer {self.token}",
         }
         query = {
             'per_page': 150,
             'show_inactive': 'No',
         }
+        
+        # Merge additional parameters if provided
+        if additional_params:
+            query.update(additional_params)
+        
         while True:
             if records != 0:
                 query['since_id'] = all_data[-1]['id']
                 logger.debug(f"Since ID: {query['since_id']}")
-            response = requests.get(f"{self.url}{url_path}", headers=headers,json=query)
+            
+            response = requests.get(f"{self.url}{url_path}", headers=headers, json=query)
+            
             if response.status_code == 200:
                 data = response.json()
                 all_data.extend(data.get('data'))  # If the response was successful, no Exception will be raised
@@ -102,8 +110,8 @@ class GalaxyAPI:
     def update_responses(self):
 
         current_date = datetime.now().strftime('%Y-%m-%d')
-        data = self.get_data_from_api(f'responses?since_updated={current_date}')
-        # data = self.get_data_from_api('responses')
+        # data = self.get_data_from_api(f'responses?since_updated={current_date}')
+        data = self.get_data_from_api('responses')
         # response = model.ResponseObject.parse_obj(data[3])
         # print(response)
         # return data
@@ -124,7 +132,7 @@ class GalaxyAPI:
             # Get current date in YYYY-MM-DD format
             current_date = datetime.now().strftime('%Y-%m-%d')
             # Fetch all hours updated today in a single API call
-            hours_data = self.get_data_from_api(f'hours?since_updated={current_date}')
+            hours_data = self.get_data_from_api('hours', {'since_updated': current_date})
             
             # Create a mapping of user IDs to their hour status
             user_status_map = {}
@@ -139,12 +147,13 @@ class GalaxyAPI:
                 current_time = datetime.now(pytz.timezone('America/Chicago'))
                 shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
                 time_diff = current_time - shift_start
-                if time_diff.total_seconds() <= 7200 and time_diff.total_seconds() >= 0:
+                if time_diff.total_seconds() <= 72000 and time_diff.total_seconds() >= -72000:
                     shift_updated = False
                     for user in shift['users']:
                         # Check if user ID is in our map of updated statuses
                         if user['id'] in user_status_map:
                             user['status'] = user_status_map[user['id']]
+                            logger.debug(f"user: {user}")
                             shift_updated = True
                     
                     # Only add shifts that had users with updated statuses
@@ -184,12 +193,13 @@ class GalaxyAPI:
     def get_last_shift(self):
         with open('transformed_responses.json', 'r') as f:
             tr = json.load(f)
-        last_shift_time_diff = 0
+        #Larger than 10000 is a long time ago
+        last_shift_time_diff = 10000
         for shift in tr:
             current_time = datetime.now(pytz.timezone('America/Chicago'))
             shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
-            time_diff = current_time - shift_start
-            if time_diff.total_seconds() > last_shift_time_diff:
+            time_diff = shift_start - current_time
+            if 0 < time_diff.total_seconds() < last_shift_time_diff:
                 last_shift_time_diff = time_diff.total_seconds()
                 last_shift = shift
         return last_shift_time_diff

@@ -44,7 +44,7 @@ def update_cal():
             # if next_shift_time_diff > 3600:
             #     last_update = time.time()
             last_shift_time_diff = gcc.get_last_shift()
-            if last_shift_time_diff > 3600:
+            if last_shift_time_diff < 3600:
                 gcc.user_checkin_update()
                 logger.debug("Updated checkin")
             time.sleep(300)
