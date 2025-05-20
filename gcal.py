@@ -36,9 +36,9 @@ def create_attendees_list(users):
     attendees = 'Signups: \n'
     for user in users:
         if 'status' in user:
-            if user['status'] == 'pending':
+            if user['checkin_status'] == 'pending':
                 attendees += f"🟡 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-            elif user['status'] == 'approved':
+            elif user['checkin_status'] == 'approved':
                 attendees += f"🟢 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
         else:
             attendees += f"🔘 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"

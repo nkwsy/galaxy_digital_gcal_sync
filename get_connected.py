@@ -141,7 +141,8 @@ class GalaxyAPI:
                     if 'user' in hour and 'id' in hour['user']:
                         user_id = hour['user']['id']
                         hour_status = hour.get('hour_status', '')
-                        user_status_map[user_id] = hour_status
+                        # user_status_map[user_id] = hour_status
+                        user_status_map[user_id] = hour
             
             for shift in tr:
                 current_time = datetime.now(pytz.timezone('America/Chicago'))
@@ -152,7 +153,16 @@ class GalaxyAPI:
                     for user in shift['users']:
                         # Check if user ID is in our map of updated statuses
                         if user['id'] in user_status_map:
-                            user['status'] = user_status_map[user['id']]
+                            user['status'] = user_status_map[user['id']]['hour_status']
+                            user['created_at'] = user_status_map[user['id']]['created_at']
+                            user['updated_at'] = user_status_map[user['id']]['updated_at']
+                            user['hour_source'] = user_status_map[user['id']]['hour_source']
+                            user['hours_id'] = user_status_map[user['id']]
+                            #Check if the user has checked in by comparing the created_at and updated_at
+                            if user['created_at'] == user['updated_at']:
+                                user['checkin_status'] = 'pending'
+                            else:
+                                user['checkin_status'] = 'approved'
                             logger.debug(f"user: {user}")
                             shift_updated = True
                     
