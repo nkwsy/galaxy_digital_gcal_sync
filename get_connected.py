@@ -196,7 +196,7 @@ class GalaxyAPI:
                 window_end = (current_time + timedelta(hours=20)).strftime("%Y-%m-%d %H:%M:%S")
                 shifts = conn.execute(
                     """SELECT s.id, s.start_ts, s.end_ts, s.duration_min, s.slots,
-                              s.need_id, n.title
+                              s.need_id, n.title, n.location
                        FROM shifts s LEFT JOIN needs n ON n.id = s.need_id
                        WHERE s.start_ts BETWEEN ? AND ?
                     """,
@@ -269,7 +269,10 @@ class GalaxyAPI:
                 gcal.get_calendars(svc)
                 gcal.update_calendar_events(shifts_to_update, svc, calendar_id=self.calendar_id, add_attendees=False)
         except Exception as e:
-            logger.error(f"Error updating checkin shifts: {e}")
+            # Log with traceback. The previous bare message silently swallowed
+            # a KeyError("location") for half a release, which made the
+            # scan-loop appear functional while pushing zero shifts.
+            logger.exception(f"Error updating checkin shifts: {e}")
         return shifts_to_update
     
     def get_next_shift(self):
