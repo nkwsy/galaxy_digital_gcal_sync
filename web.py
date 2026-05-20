@@ -183,6 +183,7 @@ def _row_for_signup(sg, shift_end_ts: str | None) -> dict:
         status = checkin.NO_SHOW if shift_end_ts and shift_end_ts < now_ct else checkin.SIGNED_UP
     src = (sg["source"] or "") if "source" in sg.keys() else ""
     return {
+        "user_id": sg["user_id"],
         "name": f"{sg['fname'] or ''} {sg['lname'] or ''}".strip(),
         "email": sg["email"] or "",
         "status": status,
@@ -243,9 +244,11 @@ def _render_today_body(conn) -> tuple[str, str]:
                 if p["status"] == checkin.NO_SHOW:    tr_cls = " class='no-show'"
                 elif p["status"] == checkin.CHECKED_IN:  tr_cls = " class='checked-in'"
                 elif p["status"] == checkin.CHECKED_OUT: tr_cls = " class='checked-out'"
+                name_html = (f'<a href="/user/{p["user_id"]}">{p["name"]}</a>'
+                             if p.get("user_id") else p["name"])
                 parts.append(
                     f"<tr{tr_cls}><td>{p['emoji']}</td>"
-                    f"<td>{p['name']}</td><td>{p['email']}</td>"
+                    f"<td>{name_html}</td><td>{p['email']}</td>"
                     f"<td>{(p['check_in'] or '')[11:16]}</td>"
                     f"<td>{(p['check_out'] or '')[11:16]}</td></tr>"
                 )

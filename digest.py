@@ -102,6 +102,7 @@ def collect(days_back: int = 1) -> dict:
                 counts[status] = counts.get(status, 0) + 1
                 totals[status] = totals.get(status, 0) + 1
                 people.append({
+                    "user_id": r["user_id"],
                     "name": f"{r['fname'] or ''} {r['lname'] or ''}".strip(),
                     "email": r["email"] or "",
                     "status": status,
@@ -133,6 +134,7 @@ def collect(days_back: int = 1) -> dict:
         "repeat_window_days": repeat_window,
         "repeat_offenders": [
             {
+                "user_id": r["id"],
                 "name": f"{r['fname'] or ''} {r['lname'] or ''}".strip(),
                 "email": r["email"] or "",
                 "no_shows": r["no_shows"],
@@ -140,6 +142,16 @@ def collect(days_back: int = 1) -> dict:
             for r in offenders
         ],
     }
+
+
+def _user_link(user_id: str | None, name: str, base_url: str) -> str:
+    """Wrap a volunteer name in an absolute <a href> when WEB_PUBLIC_URL
+    is configured, plain text otherwise. The digest goes to email clients
+    that can't resolve a bare /user/{id} path, so we need the full URL.
+    """
+    if not user_id or not base_url:
+        return name
+    return f'<a href="{base_url.rstrip("/")}/user/{user_id}">{name}</a>'
 
 
 CSS = """
@@ -161,6 +173,10 @@ th, td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #eee; }
 
 def render_html(data: dict) -> str:
     t = data["totals"]
+    # WEB_PUBLIC_URL is what the digest uses to link names back to the
+    # live viewer. Without it (default), names render as plain text -- a
+    # localhost link would 404 for whoever opens the email.
+    base_url = (os.getenv("WEB_PUBLIC_URL") or "").strip().rstrip("/")
     parts = [f"<style>{CSS}</style>"]
     parts.append(f"<h1>Volunteer digest · {data['start_date']} → {data['end_date']}</h1>")
     parts.append(f"<p class='meta'>Generated {data['generated_at']}</p>")
@@ -186,7 +202,8 @@ def render_html(data: dict) -> str:
                          "<th>In</th><th>Out</th></tr></thead><tbody>")
             for p in s["people"]:
                 cls = " class='no-show'" if p["status"] == checkin.NO_SHOW else ""
-                parts.append(f"<tr{cls}><td>{p['emoji']}</td><td>{p['name']}</td>"
+                name_html = _user_link(p.get("user_id"), p["name"], base_url)
+                parts.append(f"<tr{cls}><td>{p['emoji']}</td><td>{name_html}</td>"
                              f"<td>{p['email']}</td>"
                              f"<td>{p['checkin_time'] or ''}</td>"
                              f"<td>{p['checkout_time'] or ''}</td></tr>")
@@ -198,7 +215,8 @@ def render_html(data: dict) -> str:
         parts.append("<table class='offenders'><thead><tr><th>Volunteer</th><th>Email</th>"
                      "<th>No-shows</th></tr></thead><tbody>")
         for o in data["repeat_offenders"]:
-            parts.append(f"<tr><td>{o['name']}</td><td>{o['email']}</td><td>{o['no_shows']}</td></tr>")
+            name_html = _user_link(o.get("user_id"), o["name"], base_url)
+            parts.append(f"<tr><td>{name_html}</td><td>{o['email']}</td><td>{o['no_shows']}</td></tr>")
         parts.append("</tbody></table>")
     else:
         parts.append("<p><em>None.</em></p>")
