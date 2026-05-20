@@ -16,6 +16,7 @@ google-auth-oauthlib>=1.1
 # Web viewer
 fastapi>=0.110
 uvicorn[standard]>=0.27
+python-multipart>=0.0.9  # Form() parsing for the manual check-in buttons
 
 # model.py uses pydantic v1, but nothing in the active code path imports it
 # anymore. Leaving it unpinned -- if you later remove or migrate model.py,

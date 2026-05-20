@@ -31,14 +31,15 @@ import asyncio
 import hashlib
 import os
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from typing import Annotated, AsyncIterator
 
 import pytz
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 import checkin
@@ -333,12 +334,22 @@ def shift_detail(shift_id: str,
     parts.append(f'<div class="meta">{s["agency_name"] or ""} · '
                  f'{s["start_ts"]} → {s["end_ts"]} · slots={s["slots"]}</div>')
     parts.append('<table><thead><tr><th></th><th>Volunteer</th><th>Email</th>'
-                 '<th>Status</th><th>In</th><th>Out</th></tr></thead><tbody>')
+                 '<th>Status</th><th>In</th><th>Out</th><th>Action</th></tr></thead><tbody>')
+    # Build a {name -> response_id} lookup so we can attach action buttons.
+    # signups_for_shift is already in DB-sort order.
+    rid_lookup = {f"{r['fname']} {r['lname']}".strip(): r['response_id']
+                  for r in sgs}
     for p in people:
+        rid = rid_lookup.get(p['name'], '')
         parts.append(f"<tr><td>{p['emoji']}</td><td>{p['name']}</td><td>{p['email']}</td>"
                      f"<td>{p['status']}</td><td>{p['check_in'] or ''}</td>"
-                     f"<td>{p['check_out'] or ''}</td></tr>")
+                     f"<td>{p['check_out'] or ''}</td>"
+                     f"<td>{_render_action_buttons(rid, p['status'], shift_id)}</td></tr>")
     parts.append('</tbody></table>')
+    parts.append("<p class='meta' style='font-size:0.85em'>"
+                 "Buttons write status locally and propagate to Google "
+                 "Calendar within ~60s. They do NOT update Galaxy Digital -- "
+                 "back-fill there separately if needed.</p>")
     parts.append('<h3>Recent status changes</h3>')
     if hist:
         parts.append('<table><thead><tr><th>When (UTC)</th><th>Status</th></tr></thead><tbody>')
@@ -349,6 +360,162 @@ def shift_detail(shift_id: str,
         parts.append("<p class='empty'>No recorded status changes.</p>")
     parts.append('<p><a href="/">&laquo; back to today</a></p>')
     return HTMLResponse(_layout(s["title"] or "Shift", "\n".join(parts), live=False))
+
+
+# ---------- manual check-in actions ---------------------------------------
+#
+# Why local-only: a POST to Galaxy Digital /hours would write hour_source =
+# "/api/..." which our classifier resolves to MANAGER_ENTERED (purple). The
+# UI would then bounce 🟡 -> 🟣 on the next sync, which is confusing. Use
+# the same kiosk-source convention simulate_checkin.py uses so the calendar
+# and webpage agree on the visual state; document the Galaxy-side gap.
+
+def _now_iso() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _write_manual_status(response_id: str, action: str) -> str:
+    """Apply a manual check-in/check-out/clear to local SQLite.
+
+    Returns the resulting status string for logging / UX.
+    Raises HTTPException(404) if response_id is unknown.
+    """
+    db.init()
+    with db.connect() as conn:
+        sg = conn.execute(
+            "SELECT sg.user_id, sg.shift_id, sg.need_id "
+            "FROM signups sg WHERE sg.id = ?",
+            (response_id,),
+        ).fetchone()
+        if not sg:
+            raise HTTPException(404, f"unknown response_id {response_id!r}")
+
+        # Synthesize the same hour_source strings simulate_checkin.py uses so
+        # checkin.classify_hour resolves them to CHECKED_IN / CHECKED_OUT.
+        if action == "clear":
+            conn.execute("BEGIN")
+            conn.execute(
+                "DELETE FROM hours WHERE response_id = ? AND id LIKE 'web-%'",
+                (response_id,),
+            )
+            conn.execute(
+                "DELETE FROM scan_state WHERE key = ?",
+                (f"gcal_fp:{sg['shift_id']}",),
+            )
+            conn.execute("COMMIT")
+            return checkin.SIGNED_UP
+
+        if action == "checkin":
+            source = "Added at: /kiosk/storeCheckin/ by web ui"
+            status = checkin.CHECKED_IN
+        elif action == "checkout":
+            source = ("Added at: /kiosk/storeCheckin/ by web ui "
+                      "Updated at: /kiosk/storeCheckout/ by web ui")
+            status = checkin.CHECKED_OUT
+        else:
+            raise HTTPException(400, f"unknown action {action!r}")
+
+        existing = conn.execute(
+            "SELECT id FROM hours WHERE response_id = ? AND id LIKE 'web-%' LIMIT 1",
+            (response_id,),
+        ).fetchone()
+        now = _now_iso()
+        conn.execute("BEGIN")
+        if existing:
+            conn.execute(
+                "UPDATE hours SET source=?, classification=?, updated_at=? "
+                "WHERE id=?",
+                (source, status, now, existing["id"]),
+            )
+        else:
+            hid = f"web-{uuid.uuid4().hex[:10]}"
+            db.ingest_hour(conn, {
+                "id": hid,
+                "hour_response_id": response_id,
+                "user": {"id": sg["user_id"]},
+                "need": {"id": sg["need_id"]},
+                "hour_source": source,
+                "hour_status": "approved",
+                "hour_date_start": now,
+                "hour_date_end": now,
+                "created_at": now,
+                "updated_at": now,
+            })
+        # Append to status_history (idempotent) so /offenders + digest see it.
+        db.record_status(
+            conn, response_id=response_id, shift_id=sg["shift_id"],
+            user_id=sg["user_id"], status=status,
+        )
+        # Invalidate the per-shift gcal fingerprint so the next scan tick
+        # pushes the update instead of skipping it as unchanged.
+        conn.execute(
+            "DELETE FROM scan_state WHERE key = ?",
+            (f"gcal_fp:{sg['shift_id']}",),
+        )
+        conn.execute("COMMIT")
+        return status
+
+
+def _render_action_buttons(response_id: str, current_status: str,
+                            shift_id: str) -> str:
+    """Two/three inline POST forms next to a volunteer row.
+
+    Each button posts to /action/<verb> with response_id; on success it
+    redirects back to /shift/<shift_id>, so the page reflects the new
+    state immediately (the SSE channel will also pick it up within ~5s).
+    """
+    if not response_id:
+        return ""
+    forms = []
+    def _btn(action: str, label: str) -> str:
+        # `formaction` makes one form support multiple submit destinations,
+        # but plain forms work fine and are easier to read.
+        return (f'<form method="post" action="/action/{action}" '
+                f'style="display:inline; margin:0 2px">'
+                f'<input type="hidden" name="response_id" value="{response_id}">'
+                f'<input type="hidden" name="shift_id"    value="{shift_id}">'
+                f'<button type="submit">{label}</button></form>')
+    if current_status == checkin.CHECKED_IN:
+        forms.append(_btn("checkout", "Mark out"))
+        forms.append(_btn("clear", "Undo"))
+    elif current_status == checkin.CHECKED_OUT:
+        forms.append(_btn("clear", "Undo"))
+    elif current_status in (checkin.SIGNED_UP, checkin.NO_SHOW):
+        forms.append(_btn("checkin", "Mark in"))
+        forms.append(_btn("checkout", "Mark out"))
+    else:
+        forms.append(_btn("clear", "Undo"))
+    return "".join(forms)
+
+
+@app.post("/action/checkin")
+def action_checkin(
+    _: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+    response_id: Annotated[str, Form()],
+    shift_id: Annotated[str, Form()],
+):
+    _write_manual_status(response_id, "checkin")
+    return RedirectResponse(f"/shift/{shift_id}", status_code=303)
+
+
+@app.post("/action/checkout")
+def action_checkout(
+    _: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+    response_id: Annotated[str, Form()],
+    shift_id: Annotated[str, Form()],
+):
+    _write_manual_status(response_id, "checkout")
+    return RedirectResponse(f"/shift/{shift_id}", status_code=303)
+
+
+@app.post("/action/clear")
+def action_clear(
+    _: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+    response_id: Annotated[str, Form()],
+    shift_id: Annotated[str, Form()],
+):
+    _write_manual_status(response_id, "clear")
+    return RedirectResponse(f"/shift/{shift_id}", status_code=303)
 
 
 @app.get("/offenders", response_class=HTMLResponse)
