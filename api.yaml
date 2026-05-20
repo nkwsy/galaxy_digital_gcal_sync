@@ -2,7 +2,7 @@ openapi: 3.0.0
 x-stoplight:
   id: uo7lk8ian4ndt
 info:
-  version: 1.3.4
+  version: 1.9.2
   title: Get Connected Client API
   description: ''
 tags:
@@ -26,6 +26,8 @@ tags:
     description: Need related items
   - name: Qualification
     description: Qualification related items
+  - name: Question
+    description: Custom question related items
   - name: Response
     description: Response related items
   - name: Team
@@ -46,6 +48,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listEventsParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -54,6 +57,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listEventsParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -61,6 +65,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listEventsParamSinceCreated
             type: string
             format: date-time
             example: '2021-11-01 15:00'
@@ -69,6 +74,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listEventsParamSinceUpdated
             type: string
             format: date-time
             example: '2021-11-01 15:00'
@@ -82,6 +88,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listEventsResponse
                 type: object
                 properties:
                   data:
@@ -127,6 +134,7 @@ paths:
           description: ID of event
           required: true
           schema:
+            title: getEventParamId
             type: integer
       responses:
         '200':
@@ -134,6 +142,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getEventResponse
                 type: object
                 properties:
                   data:
@@ -156,6 +165,7 @@ paths:
           description: ID of Event
           required: true
           schema:
+            title: updateEventParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/eventRequest'
@@ -180,6 +190,7 @@ paths:
           description: ID of event
           required: true
           schema:
+            title: deleteEventParamId
             type: integer
       responses:
         '204':
@@ -206,12 +217,11 @@ paths:
           content:
             application/json:
               schema:
+                title: loginResponse
                 type: object
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/loginObject'
+                    $ref: '#/components/schemas/loginObject'
         '404':
           description: Not found
       security:
@@ -231,6 +241,7 @@ paths:
           content:
             application/json:
               schema:
+                title: authenticateResponse
                 type: object
                 properties:
                   data:
@@ -250,6 +261,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: agencyParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -258,6 +270,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: agencyParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -265,6 +278,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: agencyParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -273,6 +287,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: agencyParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -281,6 +296,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: agencyParamShowActive
             type: string
             enum:
               - 'Yes'
@@ -295,6 +311,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listAgenciesResponse
                 type: object
                 properties:
                   data:
@@ -339,6 +356,7 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: getAgencyParamId
             type: integer
       responses:
         '200':
@@ -346,6 +364,7 @@ paths:
           content:
             application/json:
               schema:
+                title: agencyGetResponse
                 type: object
                 properties:
                   data:
@@ -367,6 +386,7 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: updateAgencyParamId
             type: integer
       operationId: updateAgency
       requestBody:
@@ -392,6 +412,7 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: deleteAgencyParamId
             type: integer
       responses:
         '204':
@@ -415,6 +436,7 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyIndexCauseParamId
             type: integer
       responses:
         '200':
@@ -422,6 +444,7 @@ paths:
           content:
             application/json:
               schema:
+                title: agencyIndexCauseResponse
                 type: object
                 properties:
                   data:
@@ -447,12 +470,14 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyCausePostParamId
             type: integer
         - name: cause_id
           in: path
           description: ID of cause
           required: true
           schema:
+            title: agencyCausePostParamCauseId
             type: integer
       responses:
         '201':
@@ -475,12 +500,14 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyCauseDeleteParamId
             type: integer
         - name: cause_id
           in: path
           description: ID of cause
           required: true
           schema:
+            title: agencyCauseDeleteParamCauseId
             type: integer
       responses:
         '204':
@@ -504,6 +531,7 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyIndexClusterParamId
             type: integer
       responses:
         '200':
@@ -511,6 +539,7 @@ paths:
           content:
             application/json:
               schema:
+                title: agencyIndexClusterResponse
                 type: object
                 properties:
                   data:
@@ -536,12 +565,14 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyClusterPostParamId
             type: integer
         - name: cluster_id
           in: path
           description: ID of cluster
           required: true
           schema:
+            title: agencyClusterPostParamClusterId
             type: integer
       responses:
         '201':
@@ -564,12 +595,14 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyClusterDeleteParamId
             type: integer
         - name: cluster_id
           in: path
           description: ID of cluster
           required: true
           schema:
+            title: agencyClusterDeleteParamClusterId
             type: integer
       responses:
         '204':
@@ -593,6 +626,7 @@ paths:
           description: ID of
           required: true
           schema:
+            title: agencyIndexManagerParamId
             type: integer
       responses:
         '200':
@@ -600,6 +634,7 @@ paths:
           content:
             application/json:
               schema:
+                title: agencyIndexManagerResponse
                 type: object
                 properties:
                   data:
@@ -625,12 +660,14 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: createAgencyManagerParamId
             type: integer
         - name: user_id
           in: path
           description: ID of user being added as a manager
           required: true
           schema:
+            title: createAgencyManagerParamUserId
             type: integer
       responses:
         '201':
@@ -653,12 +690,14 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: deleteAgencyManagerParamId
             type: integer
         - name: user_id
           in: path
           description: ID of user being deleted as a manager
           required: true
           schema:
+            title: deleteAgencyManagerParamUserId
             type: integer
       responses:
         '204':
@@ -682,6 +721,7 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyIndexTagParamId
             type: integer
       responses:
         '200':
@@ -689,6 +729,7 @@ paths:
           content:
             application/json:
               schema:
+                title: agencyIndexTagResponse
                 type: object
                 properties:
                   data:
@@ -713,11 +754,13 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: createAgencyTagParamId
             type: integer
       requestBody:
         content:
           application/json:
             schema:
+              title: createAgencyTagResponse
               type: object
               required:
                 - tags
@@ -751,12 +794,14 @@ paths:
           description: ID of agency
           required: true
           schema:
+            title: agencyTagDeleteParamId
             type: integer
         - name: tag_id
           in: path
           description: ID of tag
           required: true
           schema:
+            title: agencyTagDeleteParamTagId
             type: integer
       responses:
         '204':
@@ -776,6 +821,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listBenchmarksParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -784,6 +830,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listBenchmarksParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -791,6 +838,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listBenchmarksParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -799,6 +847,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listBenchmarksParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -807,6 +856,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listBenchmarksParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -821,6 +871,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listBenchmarksResponse
                 type: object
                 properties:
                   data:
@@ -852,6 +903,7 @@ paths:
           description: Failed Validation
       security:
         - Bearer: []
+
   '/benchmarks/{id}':
     get:
       tags:
@@ -865,6 +917,7 @@ paths:
           description: ID of
           required: true
           schema:
+            title: getBenchmarkParamId
             type: integer
       responses:
         '200':
@@ -872,6 +925,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getBenchmarkResponse
                 type: object
                 properties:
                   data:
@@ -894,6 +948,7 @@ paths:
           description: ID of benchmark
           required: true
           schema:
+            title: updateBenchmarkParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/benchmarkRequest'
@@ -918,6 +973,7 @@ paths:
           description: ID of benchmark
           required: true
           schema:
+            title: deleteBenchmarkParamId
             type: integer
       responses:
         '204':
@@ -941,6 +997,7 @@ paths:
           description: ID of benchmark
           required: true
           schema:
+            title: listBenchmarkUsersParamId
             type: integer
       responses:
         '200':
@@ -948,6 +1005,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listBenchmarkUsersResponse
                 type: object
                 properties:
                   data:
@@ -973,6 +1031,7 @@ paths:
           content:
             application/json:
               schema:
+                title: causesIndexResponse
                 type: object
                 properties:
                   data:
@@ -998,6 +1057,7 @@ paths:
           content:
             application/json:
               schema:
+                title: clustersIndexResponse
                 type: object
                 properties:
                   data:
@@ -1024,6 +1084,7 @@ paths:
           content:
             application/json:
               schema:
+                title: createClusterResponse
                 type: object
                 properties:
                   data:
@@ -1049,6 +1110,7 @@ paths:
           description: ID of cluster
           required: true
           schema:
+            title: deleteClustersParamId
             type: integer
       responses:
         '204':
@@ -1073,6 +1135,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listHoursParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -1081,6 +1144,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listHoursParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -1088,6 +1152,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listHoursParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1096,6 +1161,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listHoursParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1104,6 +1170,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listHoursParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -1115,6 +1182,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listHoursParamResponse
                 type: object
                 properties:
                   data:
@@ -1161,6 +1229,7 @@ paths:
           description: ID of hour
           required: true
           schema:
+            title: getHourParamId
             type: integer
       responses:
         '200':
@@ -1168,6 +1237,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getHourResponse
                 type: object
                 properties:
                   data:
@@ -1190,6 +1260,7 @@ paths:
           description: ID of Hour
           required: true
           schema:
+            title: updateHourParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/hourRequest'
@@ -1214,6 +1285,7 @@ paths:
           description: ID of hour
           required: true
           schema:
+            title: deleteHourParamId
             type: integer
       responses:
         '204':
@@ -1237,6 +1309,7 @@ paths:
           content:
             application/json:
               schema:
+                title: impactsIndexResponse
                 type: object
                 properties:
                   data:
@@ -1262,6 +1335,7 @@ paths:
           content:
             application/json:
               schema:
+                title: interestsIndexResponse
                 type: object
                 properties:
                   data:
@@ -1286,6 +1360,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listNeedsParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -1295,6 +1370,7 @@ paths:
           description: Id of agency that created need
           required: false
           schema:
+            title: listNeedsParamAgencyId
             type: array
             items:
               type: integer
@@ -1303,12 +1379,14 @@ paths:
           description: Name of need you are search.
           required: false
           schema:
+            title: listNeedsParamNeedTitle
             type: string
         - name: need_status
           in: query
           description: Status of needs you would like to find.
           required: false
           schema:
+            title: listNeedsParamNeedStatus
             type: string
             enum:
               - active
@@ -1318,6 +1396,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listNeedsParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -1325,6 +1404,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listNeedsParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1333,6 +1413,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listNeedsParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1341,6 +1422,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listNeedsParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -1352,6 +1434,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listNeedsResponse
                 type: object
                 properties:
                   data:
@@ -1396,6 +1479,7 @@ paths:
           description: ID of Need
           required: true
           schema:
+            title: getNeedParamId
             type: integer
       responses:
         '200':
@@ -1403,6 +1487,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getNeedResponse
                 type: object
                 properties:
                   data:
@@ -1425,6 +1510,7 @@ paths:
           description: ID of Need
           required: true
           schema:
+            title: updateNeedParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/needRequest'
@@ -1449,6 +1535,7 @@ paths:
           description: ID of Need
           required: true
           schema:
+            title: deleteNeedParamId
             type: integer
       responses:
         '204':
@@ -1472,6 +1559,7 @@ paths:
           description: ID of Need
           required: true
           schema:
+            title: listNeedResponsesParamId
             type: integer
       responses:
         '200':
@@ -1479,6 +1567,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listNeedResponsesResponse
                 type: object
                 properties:
                   data:
@@ -1491,6 +1580,97 @@ paths:
           description: No results
       security:
         - Bearer: []
+
+  '/needs/{id}/shifts':
+    post:
+      tags:
+        - Need
+      summary: Create shifts for an existing need
+      description: Create shifts for an existing need
+      operationId: needAddShifts
+      parameters:
+        - name: id
+          in: path
+          description: ID of need
+          required: true
+          schema:
+            title: needAddInterestParamId
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              title: needAddShiftsRequestSchema
+              type: object
+              required:
+                - shifts
+              properties:
+                shifts:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - start
+                      - slots
+                      - duration
+                    properties:
+                      start:
+                        type: string
+                        format: datetime
+                        example: 2024-02-28 12:00
+                      slots:
+                        type: string
+                        format: integer
+                        description: The response limit
+                        example: 15
+                      duration:
+                        type: string
+                        format: integer
+                        description: The number of minutes in the shift
+                        example: 120
+
+      responses:
+        '201':
+          description: Created
+        '401':
+          description: Unauthorized
+        '404':
+          description: No results
+      security:
+        - Bearer: []
+
+  '/needs/{id}/shifts/{shift_id}':
+    delete:
+      tags:
+        - Need
+      summary: Remove shift from a need
+      description: Remove shift from a need
+      operationId: needRemoveShifts
+      parameters:
+        - name: id
+          in: path
+          description: ID of need
+          required: true
+          schema:
+            title: needAddShiftParamId
+            type: integer
+        - name: shift_id
+          in: path
+          description: ID of shift to be removed
+          required: true
+          schema:
+            title: needAddShiftParamIdShiftId
+            type: integer
+      responses:
+        '204':
+          description: Successful operation
+        '401':
+          description: Unauthorized
+        '404':
+          description: No results
+      security:
+        - Bearer: []
+
   '/needs/{id}/interests/{interest_id}':
     post:
       tags:
@@ -1504,12 +1684,14 @@ paths:
           description: ID of need
           required: true
           schema:
+            title: needAddInterestParamId
             type: integer
         - name: interest_id
           in: path
           description: ID of interest
           required: true
           schema:
+            title: needAddInterestParamInterestId
             type: integer
       responses:
         '201':
@@ -1532,12 +1714,14 @@ paths:
           description: ID of need
           required: true
           schema:
+            title: needDeleteInterestParamId
             type: integer
         - name: interest_id
           in: path
           description: ID of interest
           required: true
           schema:
+            title: needDeleteInterestParamInterestId
             type: integer
       responses:
         '204':
@@ -1561,12 +1745,14 @@ paths:
           description: ID of need
           required: true
           schema:
+            title: needAddQualificationParamId
             type: integer
         - name: qualification_id
           in: path
           description: ID of qualification
           required: true
           schema:
+            title: needAddQualificationParamQualificationId
             type: integer
       responses:
         '201':
@@ -1591,12 +1777,14 @@ paths:
           description: ID of need
           required: true
           schema:
+            title: needDeleteQualificationParamId
             type: integer
         - name: qualification_id
           in: path
           description: ID of qualification
           required: true
           schema:
+            title: needDeleteQualificationParamQualificationId
             type: integer
       responses:
         '204':
@@ -1620,6 +1808,7 @@ paths:
           description: ID of Need
           required: true
           schema:
+            title: listNeedQuestionsParamId
             type: integer
       responses:
         '200':
@@ -1627,6 +1816,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listNeedQuestionsResponse
                 type: object
                 properties:
                   data:
@@ -1648,6 +1838,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listQualificationsParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -1656,6 +1847,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listQualificationsParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -1663,6 +1855,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listQualificationsParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1671,6 +1864,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listQualificationsParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1679,6 +1873,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listQualificationsParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -1693,6 +1888,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listQualificationsResponse
                 type: object
                 properties:
                   data:
@@ -1737,6 +1933,7 @@ paths:
           description: ID of qualification
           required: true
           schema:
+            title: getQualificationParamId
             type: integer
       responses:
         '200':
@@ -1744,6 +1941,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getQualificationResponse
                 type: object
                 properties:
                   data:
@@ -1766,6 +1964,7 @@ paths:
           description: ID of qualification
           required: true
           schema:
+            title: updateQualificationParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/qualificationRequest'
@@ -1790,6 +1989,7 @@ paths:
           description: ID of qualification
           required: true
           schema:
+            title: deleteQualificationParamId
             type: integer
       responses:
         '204':
@@ -1813,6 +2013,7 @@ paths:
           description: ID of
           required: true
           schema:
+            title: listQualificationUsersParamId
             type: integer
       responses:
         '200':
@@ -1820,6 +2021,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listQualificationUsersResponse
                 type: object
                 properties:
                   data:
@@ -1832,6 +2034,36 @@ paths:
           description: No results
       security:
         - Bearer: []
+
+  /questions/registration:
+    get:
+      tags:
+        - Question
+      summary: List custom registration questions
+      description: List custom registration questions
+      operationId: listRegistrationQuestions
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                title: listRegistrationQuestionsResponse
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/questionObject'
+        '401':
+          description: Unauthorized
+        '404':
+          description: No results
+        '422':
+          description: Failed Validation
+      security:
+        - Bearer: []
+
   /responses:
     get:
       tags:
@@ -1844,6 +2076,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listResponsesParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -1852,6 +2085,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listResponsesParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -1859,6 +2093,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listResponsesParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1867,6 +2102,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listResponsesParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -1875,6 +2111,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listResponsesParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -1886,6 +2123,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listResponsesResponse
                 type: object
                 properties:
                   data:
@@ -1930,6 +2168,7 @@ paths:
           description: ID of
           required: true
           schema:
+            title: getResponseParamId
             type: integer
       responses:
         '200':
@@ -1937,6 +2176,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getResponseResponse
                 type: object
                 properties:
                   data:
@@ -1959,6 +2199,7 @@ paths:
           description: ID of Response
           required: true
           schema:
+            title: updateResponseParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/responseRequest'
@@ -1983,6 +2224,7 @@ paths:
           description: ID of response
           required: true
           schema:
+            title: deleteResponseParamId
             type: integer
       responses:
         '204':
@@ -2002,6 +2244,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listTeamsParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -2010,6 +2253,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listTeamsParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -2017,6 +2261,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listTeamsParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -2025,6 +2270,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listTeamsParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -2033,6 +2279,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listTeamsParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -2047,6 +2294,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listTeamsResponse
                 type: object
                 properties:
                   data:
@@ -2091,6 +2339,7 @@ paths:
           description: ID of team
           required: true
           schema:
+            title: getTeamParamId
             type: integer
       responses:
         '200':
@@ -2098,6 +2347,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getTeamResponse
                 type: object
                 properties:
                   data:
@@ -2120,6 +2370,7 @@ paths:
           description: ID of team
           required: true
           schema:
+            title: deleteTeamParamId
             type: integer
       responses:
         '204':
@@ -2143,18 +2394,21 @@ paths:
           description: ID of team
           required: true
           schema:
+            title: teamMemberAttachParamId
             type: integer
         - name: member
           in: path
           description: ID of user being attached to team
           required: true
           schema:
+            title: teamMemberAttachParamMember
             type: integer
       requestBody:
         required: true
         content:
           application/json:
             schema:
+              title: teamMemberAttachRequest
               type: object
               properties:
                 sch_id:
@@ -2183,12 +2437,14 @@ paths:
           description: ID of team
           required: true
           schema:
+            title: teamMemberDetachParamId
             type: integer
         - name: member
           in: path
           description: ID of user being detached from team
           required: true
           schema:
+            title: teamMemberDetachParamMember
             type: integer
       responses:
         '204':
@@ -2211,18 +2467,29 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listUsersParamPerPage
             type: integer
             minimum: 1
             maximum: 150
           description: Define how many results are returned per page
+        - in: query
+          name: page
+          required: false
+          schema:
+            title: listUsersParamPage
+            type: integer
+            minimum: 1
+          description: page number
         - name: user_status
           in: query
           description: Status values that need to be considered for filter
           required: false
           schema:
+            title: listUsersParamUserArrayStatus
             type: array
             items:
               type: string
+              title: listUsersParamUserStatus
               enum:
                 - active
                 - pending
@@ -2234,18 +2501,21 @@ paths:
           description: User first name
           required: false
           schema:
+            title: listUsersParamUserFname
             type: string
         - name: user_lname
           in: query
           description: User last name
           required: false
           schema:
+            title: listUsersParamUserLname
             type: string
         - name: user_email
           in: query
           description: User email address
           required: false
           schema:
+            title: listUsersParamUserEmail
             type: string
             format: email
         - name: user_fname_like
@@ -2253,24 +2523,28 @@ paths:
           description: Filter by partial user first name
           required: false
           schema:
+            title: listUsersParamUserFnameLike
             type: string
         - name: user_lname_like
           in: query
           description: Filter by partial user last name
           required: false
           schema:
+            title: listUsersParamUserLnameLike
             type: string
         - name: user_email_like
           in: query
           description: Filter by partial user email address
           required: false
           schema:
+            title: listUsersParamUserEmailLike
             type: string
             format: email
         - in: query
           name: since_id
           required: false
           schema:
+            title: listUsersParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -2278,6 +2552,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listUsersParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -2286,6 +2561,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listUsersParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -2294,6 +2570,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listUsersParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -2305,12 +2582,40 @@ paths:
           content:
             application/json:
               schema:
+                title: listUsersParamResponse
                 type: object
                 properties:
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/userObject'
+                  links:
+                    type: object
+                    properties:
+                      first:
+                        type: string
+                      last:
+                        nullable: true
+                        type: string
+                      prev:
+                        nullable: true
+                        type: string
+                      next:
+                        nullable: true
+                        type: string
+                  meta:
+                    type: object
+                    properties:
+                      current_page:
+                        type: integer
+                      from:
+                        type: integer
+                      path:
+                        type: string
+                      per_page:
+                        type: integer
+                      to:
+                        type: integer
         '401':
           description: Unauthorized
         '404':
@@ -2347,6 +2652,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: getUserParamId
             type: integer
       responses:
         '200':
@@ -2354,6 +2660,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getUserResponse
                 type: object
                 properties:
                   data:
@@ -2378,6 +2685,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: putUserParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/userRequest'
@@ -2404,6 +2712,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: deleteUserParamId
             type: integer
       responses:
         '204':
@@ -2427,6 +2736,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserAgenciesParamId
             type: integer
       responses:
         '200':
@@ -2434,6 +2744,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserAgenciesResponse
                 type: object
                 properties:
                   data:
@@ -2459,12 +2770,14 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: createUserAgencyFanParamId
             type: integer
         - name: agency_id
           in: path
           description: ID of agency
           required: true
           schema:
+            title: createUserAgencyFanParamAgencyId
             type: integer
       responses:
         '200':
@@ -2489,12 +2802,14 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: deleteUserAgencyFanParamId
             type: integer
         - name: agency_id
           in: path
           description: ID of agency
           required: true
           schema:
+            title: deleteUserAgencyFanParamAgencyId
             type: integer
       responses:
         '204':
@@ -2518,6 +2833,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserBenchmarksParamId
             type: integer
       responses:
         '200':
@@ -2525,6 +2841,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserBenchmarksResponse
                 type: object
                 properties:
                   data:
@@ -2548,12 +2865,14 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: deleteUserBenchmarkParamId
             type: integer
         - name: benchmark_id
           in: path
           description: ID of benchmark
           required: true
           schema:
+            title: deleteUserBenchmarkParamBenchmarkId
             type: integer
       responses:
         '204':
@@ -2577,6 +2896,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserCausesParamId
             type: integer
       responses:
         '200':
@@ -2584,6 +2904,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserCausesResponse
                 type: object
                 properties:
                   data:
@@ -2609,17 +2930,20 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: createUserCauseParamId
             type: integer
         - name: cause_id
           in: path
           description: ID of user / cause relationship
           required: true
           schema:
+            title: createUserCauseParamCauseId
             type: integer
       requestBody:
         content:
           application/json:
             schema:
+              title: createUserCauseRequest
               type: object
               required:
                 - name
@@ -2647,12 +2971,14 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: deleteUserCauseParamId
             type: integer
         - name: cause_id
           in: path
           description: ID of user / cause relationship
           required: true
           schema:
+            title: deleteUserCauseParamCauseId
             type: integer
       responses:
         '204':
@@ -2676,13 +3002,25 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserExtrasParamId
             type: integer
+        - in: query
+          name: subset
+          required: false
+          schema:
+            title: listUserExtrasParamSubset
+            type: string
+            enum:
+              - 'regExtra'
+              - 'profile'
+          description: Define the subset of results you want back. The default is regExtra.
       responses:
         '200':
           description: Successful operation
           content:
             application/json:
               schema:
+                title: listUserExtrasResponse
                 type: object
                 properties:
                   data:
@@ -2707,11 +3045,23 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: createUserExtraParamId
             type: integer
+        - name: subset
+          in: query
+          description: Desired subset to store data under. If empty, the default is regExtra.
+          required: false
+          schema:
+            title: createUserExtraParamSubset
+            type: string
+            enum:
+              - regExtra
+              - profile
       requestBody:
         content:
           application/json:
             schema:
+              title: createUserExtraRequest
               type: object
               properties:
                 extras:
@@ -2725,7 +3075,7 @@ paths:
                         type: string
                         example: Spanish
       responses:
-        '200':
+        '201':
           description: Successful operation
         '401':
           description: Unauthorized
@@ -2746,6 +3096,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserhoursParamId
             type: integer
       responses:
         '200':
@@ -2753,6 +3104,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserhoursResponse
                 type: object
                 properties:
                   data:
@@ -2778,6 +3130,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserInterestsParamId
             type: integer
       responses:
         '200':
@@ -2785,6 +3138,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserInterestsResponse
                 type: object
                 properties:
                   data:
@@ -2810,12 +3164,14 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: addUserInterestParamId
             type: integer
         - name: interest_id
           in: path
           description: ID interest
           required: true
           schema:
+            title: addUserInterestParamInterestId
             type: integer
       responses:
         '200':
@@ -2838,12 +3194,14 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: deleteUserInterestParamId
             type: integer
         - name: interest_id
           in: path
           description: ID of user / interests relationship
           required: true
           schema:
+            title: deleteUserInterestParamInterestId
             type: integer
       responses:
         '204':
@@ -2868,6 +3226,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: getUserWelcomeEmailParamId
             type: integer
       responses:
         '201':
@@ -2892,6 +3251,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: getUserOneclickParamId
             type: integer
       responses:
         '200':
@@ -2899,6 +3259,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getUserOneclickResponse
                 type: object
                 properties:
                   data:
@@ -2922,10 +3283,19 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: getUserOptoutParamId
             type: integer
       responses:
         '200':
           description: User has opted out
+          content:
+            application/json:
+              schema:
+                title: getUserOptoutResponse
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/userOptoutsObject'
         '401':
           description: Unauthorized
         '404':
@@ -2944,7 +3314,36 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: createUserOptoutParamId
             type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              title: createUserOptoutRequest
+              type: object
+              required:
+                - optout_areas
+              properties:
+                optout_areas:
+                  description: Submitted opt-out areas will supersede previously saved optouts. Submitting "all" will opt the user out of all messaging.
+                  type: array
+                  example:
+                    - reminders_and_confirmations
+                    - news_and_recommendations
+                    - surveys_and_thank_yous
+                    - schedule_updates
+                    - account_management
+                    - site_manager_activity
+                    - site_manager_tasks
+                    - site_manager_updates
+                    - agency_manager_activity
+                    - agency_manager_tasks
+                    - agency_manager_updates
+                    - blast
+                    - all
+                  items:
+                    type: string
       responses:
         '201':
           description: Successful operation
@@ -2966,7 +3365,36 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: deleteUserOptoutParamId
             type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              title: deleteUserOptoutRequest
+              type: object
+              required:
+                - optout_areas
+              properties:
+                optout_areas:
+                  description: Submit only the areas you wish to remove from the user's opt-out list.
+                  type: array
+                  example:
+                    - reminders_and_confirmations
+                    - news_and_recommendations
+                    - surveys_and_thank_yous
+                    - schedule_updates
+                    - account_management
+                    - site_manager_activity
+                    - site_manager_tasks
+                    - site_manager_updates
+                    - agency_manager_activity
+                    - agency_manager_tasks
+                    - agency_manager_updates
+                    - blast
+                    - all
+                  items:
+                    type: string
       responses:
         '204':
           description: Successful operation
@@ -2989,6 +3417,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserQualificationsParamId
             type: integer
       responses:
         '200':
@@ -2996,6 +3425,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserQualificationsResponse
                 type: object
                 properties:
                   data:
@@ -3006,6 +3436,88 @@ paths:
           description: Unauthorized
       security:
         - Bearer: []
+
+  '/users/{id}/registrationQuestions':
+    get:
+      tags:
+        - User
+      summary: Get list of user responses to registration questions
+      description: Get list of user responses to registration questions
+      operationId: listUserRegistrationQuestionAnswers
+      parameters:
+        - name: id
+          in: path
+          description: ID of user
+          required: true
+          schema:
+            title: listRegistrationQuestionAnswersParamId
+            type: integer
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                title: listRegistrationQuestionAnswersResponse
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RegistrationResponseAnswerObject'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not found
+      security:
+        - Bearer: []
+    post:
+      tags:
+        - User
+      summary: Store answers to custom registration questions
+      description: Store answers to custom registration questions
+      operationId: createRegistrationQuestionAnswers
+      parameters:
+        - name: id
+          in: path
+          description: ID of user
+          required: true
+          schema:
+            title: createRegistrationQuestionAnswersParamId
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              title: createRegistrationQuestionAnswersRequest
+              type: object
+              required:
+                - answers
+              properties:
+                answers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      question_id:
+                        type: string
+                        format: number
+                        example: 431255
+                      answer:
+                        type: array
+                        items:
+                          type: string
+                          example: First answer
+      responses:
+        '201':
+          description: Created
+        '401':
+          description: Unauthorized
+        '404':
+          description: No results
+      security:
+        - Bearer: []
+
   '/users/{id}/responses':
     get:
       tags:
@@ -3019,6 +3531,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserResponsesParamId
             type: integer
       responses:
         '200':
@@ -3026,6 +3539,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserResponsesResponse
                 type: object
                 properties:
                   data:
@@ -3051,6 +3565,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserTracksParamId
             type: integer
       responses:
         '200':
@@ -3058,6 +3573,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserTracksResponse
                 type: object
                 properties:
                   data:
@@ -3083,6 +3599,7 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: listUserTagsParamId
             type: integer
       responses:
         '200':
@@ -3090,6 +3607,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listUserTagsResponse
                 type: object
                 properties:
                   data:
@@ -3105,8 +3623,8 @@ paths:
     post:
       tags:
         - User
-      summary: List tags assigned to a user
-      description: List tags assigned to a user
+      summary: Add tags to a user
+      description: Add tags to a user
       operationId: createUserTag
       parameters:
         - name: id
@@ -3114,11 +3632,13 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: createUserTagParamId
             type: integer
       requestBody:
         content:
           application/json:
             schema:
+              title: createUserTagRequest
               type: object
               required:
                 - tags
@@ -3131,8 +3651,8 @@ paths:
                   items:
                     type: string
       responses:
-        '200':
-          description: Successful operation
+        '201':
+          description: Created
         '401':
           description: Unauthorized
         '404':
@@ -3152,12 +3672,14 @@ paths:
           description: ID of user
           required: true
           schema:
+            title: deleteUserTagParamId
             type: integer
         - name: tag_id
           in: path
           description: ID of tag
           required: true
           schema:
+            title: deleteUserTagParamTagId
             type: integer
       responses:
         '204':
@@ -3177,6 +3699,7 @@ paths:
           name: per_page
           required: false
           schema:
+            title: listGroupsParamPerPage
             type: integer
             minimum: 1
             maximum: 150
@@ -3185,6 +3708,7 @@ paths:
           name: since_id
           required: false
           schema:
+            title: listGroupsParamSinceId
             type: integer
             minimum: 1
           description: Filtering items that have been added since that ID
@@ -3192,6 +3716,7 @@ paths:
           name: since_created
           required: false
           schema:
+            title: listGroupsParamSinceCreated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -3200,6 +3725,7 @@ paths:
           name: since_updated
           required: false
           schema:
+            title: listGroupsParamSinceUpdated
             type: string
             format: datetime
             example: '2021-11-01 15:00'
@@ -3208,6 +3734,7 @@ paths:
           name: show_inactive
           required: false
           schema:
+            title: listGroupsParamShowInactive
             type: string
             enum:
               - 'Yes'
@@ -3222,6 +3749,7 @@ paths:
           content:
             application/json:
               schema:
+                title: listGroupsResponse
                 type: object
                 properties:
                   data:
@@ -3266,6 +3794,7 @@ paths:
           description: ID of
           required: true
           schema:
+            title: getGroupParamId
             type: integer
       responses:
         '200':
@@ -3273,6 +3802,7 @@ paths:
           content:
             application/json:
               schema:
+                title: getGroupResponse
                 type: object
                 properties:
                   data:
@@ -3295,6 +3825,7 @@ paths:
           description: ID of user group
           required: true
           schema:
+            title: updateGroupParamId
             type: integer
       requestBody:
         $ref: '#/components/requestBodies/groupRequest'
@@ -3319,6 +3850,7 @@ paths:
           description: ID of user group
           required: true
           schema:
+            title: deleteGroupParamId
             type: integer
       responses:
         '204':
@@ -3342,12 +3874,14 @@ paths:
           description: ID of group
           required: true
           schema:
+            title: postGroupNeedParamId
             type: integer
         - name: need_id
           in: path
           description: ID of need being added to group
           required: true
           schema:
+            title: postGroupNeedParamNeedId
             type: integer
       responses:
         '201':
@@ -3368,12 +3902,14 @@ paths:
           description: ID of
           required: true
           schema:
+            title: deleteGroupNeedParamId
             type: integer
         - name: need_id
           in: path
           description: ID of need to remove
           required: true
           schema:
+            title: deleteGroupNeedParamNeedId
             type: integer
       responses:
         '204':
@@ -3397,12 +3933,14 @@ paths:
           description: ID of
           required: true
           schema:
+            title: postGroupUserParamId
             type: integer
         - name: user_id
           in: path
           description: ID of user to remove
           required: true
           schema:
+            title: postGroupUserParamUserId
             type: integer
       responses:
         '201':
@@ -3423,12 +3961,14 @@ paths:
           description: ID of
           required: true
           schema:
+            title: deleteGroupUserParamId
             type: integer
         - name: user_id
           in: path
           description: ID of user to remove
           required: true
           schema:
+            title: deleteGroupUserParamUserId
             type: integer
       responses:
         '204':
@@ -3520,6 +4060,7 @@ components:
             $ref: '#/components/schemas/authenticateRequestSchema'
   schemas:
     groupObject:
+      title: groupObjectSchema
       type: object
       properties:
         id:
@@ -3613,6 +4154,7 @@ components:
           items:
             $ref: '#/components/schemas/questionObject'
     teamObject:
+      title: teamObjectSchema
       type: object
       properties:
         id:
@@ -3641,15 +4183,19 @@ components:
           items:
             $ref: '#/components/schemas/teamMembersObject'
     agencyMiniObject:
+      title: agencyMiniObjectSchema
       type: object
       properties:
         id:
-          type: integer
+          type: string
+          format: number
         domain_id:
-          type: integer
+          type: string
+          format: number
         agency_name:
           type: string
     initiativeMiniObject:
+      title: initiativeMiniObjectSchema
       type: object
       properties:
         id:
@@ -3661,6 +4207,7 @@ components:
         init_title:
           type: string
     groupMiniObject:
+      title: groupMiniObjectSchema
       type: object
       properties:
         id:
@@ -3672,6 +4219,7 @@ components:
         group_title:
           type: string
     needMiniObject:
+      title: needMiniObjectSchema
       type: object
       properties:
         id:
@@ -3682,13 +4230,33 @@ components:
           format: number
         need_title:
           type: string
-    ResponseAnswerObject:
+    RegistrationResponseAnswerObject:
+      title: RegistrationResponseAnswerObjectSchema
       type: object
       properties:
         type:
           type: string
         key:
           type: string
+          format: number
+        area:
+          type: string
+        question_id:
+          type: string
+          format: number
+        question:
+          type: string
+        answer:
+          type: string
+    ResponseAnswerObject:
+      title: ResponseAnswerObjectSchema
+      type: object
+      properties:
+        type:
+          type: string
+        key:
+          type: string
+          format: number
         area:
           type: string
         question:
@@ -3696,6 +4264,7 @@ components:
         answer:
           type: string
     trackMiniObject:
+      title: trackMiniObjectSchema
       type: object
       properties:
         id:
@@ -3710,6 +4279,7 @@ components:
           format: date-time
           example: '2021-01-01 12:00:00'
     teamMiniObject:
+      title: teamMiniObjectSchema
       type: object
       properties:
         id:
@@ -3718,9 +4288,10 @@ components:
         domain_id:
           type: string
           format: number
-        name:
+        team_name:
           type: string
     GroupUserMiniObject:
+      title: GroupUserMiniObjectSchema
       type: object
       properties:
         id:
@@ -3741,6 +4312,7 @@ components:
             - 'Yes'
             - 'No'
     userMiniObject:
+      title: userMiniObjectSchema
       type: object
       properties:
         id:
@@ -3756,6 +4328,7 @@ components:
         user_email:
           type: string
     teamMembersObject:
+      title: teamMembersObjectSchema
       type: object
       properties:
         id:
@@ -3775,7 +4348,26 @@ components:
           enum:
             - 'Yes'
             - 'No'
+    userOptoutsObject:
+      title: userOptoutsObjectSchema
+      type: object
+      properties:
+        id:
+          type: string
+          format: number
+        email:
+          type: string
+          format: email
+        optout_areas:
+          type: array
+          items:
+            type: string
+            example: "surveys_and_thank_yous"
+        date_added:
+          type: string
+          format: datetime
     userQualificationsObject:
+      title: userQualificationsObjectSchema
       type: object
       properties:
         id:
@@ -3802,6 +4394,7 @@ components:
           type: string
           format: date
     qualificationUsersObject:
+      title: qualificationUsersObjectSchema
       type: object
       properties:
         id:
@@ -3829,6 +4422,7 @@ components:
           type: string
           format: date
     categoryObject:
+      title: categoryObjectSchema
       type: object
       properties:
         id:
@@ -3837,13 +4431,16 @@ components:
         name:
           type: string
     extraObject:
+      title: extraObjectSchema
       type: object
       properties:
         key:
           type: string
         value:
+          nullable: true
           type: string
     qualificationObject:
+      title: qualificationObjectSchema
       type: object
       properties:
         id:
@@ -3910,6 +4507,7 @@ components:
           format: date-time
           example: '2021-01-01 12:00:00'
     needObject:
+      title: needObjectSchema
       type: object
       properties:
         id:
@@ -4012,6 +4610,7 @@ components:
           format: date-time
           example: '2021-01-01 12:00:00'
     agencyObject:
+      title: agencyObjectSchema
       type: object
       properties:
         id:
@@ -4109,6 +4708,7 @@ components:
           format: date-time
           example: '2021-01-01 12:00:00'
     shiftRequestSchema:
+      title: shiftRequestSchema
       type: object
       properties:
         slots:
@@ -4127,6 +4727,7 @@ components:
           example: "120"
           description: Duration in minutes
     shiftObject:
+      title: shiftObjectSchema
       type: object
       properties:
         id:
@@ -4146,6 +4747,7 @@ components:
           type: string
           format: number
     userOneclickObject:
+      title: userOneclickObjectSchema
       type: object
       properties:
         link:
@@ -4160,6 +4762,7 @@ components:
           format: datetime
           example: '2022-01-14 14:10:00'
     userObject:
+      title: userObjectSchema
       type: object
       properties:
         id:
@@ -4168,6 +4771,8 @@ components:
         domain_id:
           type: string
           format: number
+        domain_sitename:
+          type: string
         user_reference_id:
           type: string
         user_fname:
@@ -4199,6 +4804,7 @@ components:
         user_country:
           type: string
         user_age_range:
+          nullable: true
           type: string
           enum:
             - 13-18
@@ -4216,6 +4822,7 @@ components:
             - 'No'
         user_birthday:
           type: string
+          nullable: true
           format: date
         user_company:
           type: string
@@ -4225,6 +4832,7 @@ components:
           type: string
         user_ethnicity:
           type: string
+          nullable: true
           enum:
             - American Indian and Alaska Native
             - Asian
@@ -4235,6 +4843,7 @@ components:
             - White
         user_gender:
           type: string
+          nullable: true
           enum:
             - Male
             - Female
@@ -4242,6 +4851,7 @@ components:
             - Other
         user_grad_semester:
           type: string
+          nullable: true
           enum:
             - spring
             - summer
@@ -4257,6 +4867,7 @@ components:
         user_status:
           type: string
           example: active
+          nullable: true
           enum:
             - active
             - pending
@@ -4271,6 +4882,7 @@ components:
           format: date-time
           example: '2021-01-01 12:00:00'
     questionObject:
+      title: questionObjectSchema
       type: object
       properties:
         id:
@@ -4285,6 +4897,10 @@ components:
             - radio
             - checkbox
             - select
+        q_label:
+          type: string
+          description: The question being asked
+          example: What is your favorite color?
         q_options:
           type: array
           example:
@@ -4319,6 +4935,7 @@ components:
           format: date-time
           example: '2021-01-01 12:00:00'
     hourObject:
+      title: hourObjectSchema
       type: object
       properties:
         id:
@@ -4355,6 +4972,8 @@ components:
           type: string
         hour_relationship:
           type: string
+        hour_parent:
+          type: string
         hour_source:
           type: string
         hour_status:
@@ -4380,6 +4999,7 @@ components:
           format: date-time
           example: '2021-01-01 12:00:00'
     userResponseObject:
+      title: userResponseObjectSchema
       type: object
       properties:
         id:
@@ -4406,6 +5026,7 @@ components:
           type: string
           format: date-time
     responseObject:
+      title: responseObjectSchema
       type: object
       properties:
         id:
@@ -4452,6 +5073,7 @@ components:
           items:
             $ref: '#/components/schemas/ResponseAnswerObject'
     tagObject:
+      title: tagObjectSchema
       type: object
       properties:
         id:
@@ -4460,6 +5082,7 @@ components:
         name:
           type: string
     interestObject:
+      title: interestObjectSchema
       type: object
       properties:
         id:
@@ -4469,6 +5092,7 @@ components:
         name:
           type: string
     impactObject:
+      title: impactObjectSchema
       type: object
       properties:
         id:
@@ -4478,6 +5102,7 @@ components:
         impact_name:
           type: string
     causeObject:
+      title: causeObjectSchema
       type: object
       properties:
         id:
@@ -4487,6 +5112,7 @@ components:
         name:
           type: string
     eventObject:
+      title: eventObjectSchema
       type: object
       properties:
         id:
@@ -4555,6 +5181,7 @@ components:
           format: date-
           example: '2021-01-01 12:00:00'
     loginObject:
+      title: loginObjectSchema
       type: object
       properties:
         user:
@@ -4580,6 +5207,7 @@ components:
           type: string
           format: date-time
     clusterObject:
+      title: clusterObjectSchema
       type: object
       properties:
         id:
@@ -4589,6 +5217,7 @@ components:
         name:
           type: string
     benchmarkObject:
+      title: benchmarkObjectSchema
       type: object
       properties:
         id:
@@ -4651,6 +5280,7 @@ components:
           format: date-
           example: '2021-01-01 12:00:00'
     benchmarkMiniObject:
+      title: benchmarkMiniObjectSchema
       type: object
       properties:
         id:
@@ -4700,6 +5330,7 @@ components:
           format: date-
           example: '2021-01-01 12:00:00'
     eventRequestSchema:
+      title: eventRequestSchema
       type: object
       required:
         - event_area
@@ -4769,6 +5400,7 @@ components:
             - Outdoors
             - Entertainment
     loginRequestSchema:
+      title: loginRequestSchema
       type: object
       required:
         - user_email
@@ -4782,6 +5414,7 @@ components:
         key:
           type: string
     authenticateRequestSchema:
+      title: authenticateRequestSchema
       type: object
       required:
         - user_email
@@ -4792,6 +5425,7 @@ components:
         user_password:
           type: string
     benchmarkRequestSchema:
+      title: benchmarkRequestSchema
       type: object
       required:
         - benchmark_title
@@ -4850,6 +5484,8 @@ components:
             - inactive
             - pending
     clusterRequestSchema:
+      description: clusterRequestSchema
+      title: clusterRequestSchema
       type: object
       required:
         - name
@@ -4857,6 +5493,7 @@ components:
         name:
           type: string
     groupRequestSchema:
+      title: groupRequestSchema
       type: object
       required:
         - ug_status
@@ -4925,6 +5562,7 @@ components:
             - 'Yes'
             - 'No'
     hourRequestSchema:
+      title: hourRequestSchema
       type: object
       required:
         - hour_hours
@@ -4973,6 +5611,7 @@ components:
             format: number
             example: "12345"
     userRequestSchema:
+      title: userRequestSchema
       type: object
       required:
         - user_fname
@@ -5021,6 +5660,13 @@ components:
           type: string
         user_ethnicity:
           type: string
+        user_gender:
+          type: string
+          enum:
+            - Male
+            - Female
+            - PreferNotToSay
+            - Other
         user_grad_semester:
           type: string
           enum:
@@ -5047,6 +5693,7 @@ components:
             - imported
             - inactive
     agencyRequestSchema:
+      title: agencyRequestSchema
       type: object
       required:
         - agency_name
@@ -5115,6 +5762,7 @@ components:
             - 'Yes'
             - 'No'
     responseRequestSchema:
+      title: responseRequestSchema
       type: object
       required:
         - need_id
@@ -5168,7 +5816,13 @@ components:
                 inputFieldTest:
                   type: string
                   example: Dark Chox
+        response_date_added:
+          type: string
+          format: date-time
+          example: '2021-01-01 12:30:00'
+          description: Override the default date the response record was added. This can be any date in the past. If not provided, the current date will be used.
     needRequestSchema:
+      title: needRequestSchema
       type: object
       required:
         - agency_id
@@ -5303,6 +5957,7 @@ components:
           items:
             $ref: '#/components/schemas/shiftRequestSchema'
     qualificationRequestSchema:
+      title: qualificationRequestSchema
       type: object
       required:
         - qualification_title
@@ -5388,6 +6043,7 @@ components:
             - 'Yes'
             - 'No'
     teamRequestSchema:
+      title: teamRequestSchema
       type: object
       required:
         - team_title

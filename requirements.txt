@@ -1,29 +1,24 @@
-cachetools==5.3.1
-certifi==2023.5.7
-charset-normalizer==3.1.0
-dnspython==2.3.0
-email-validator==2.0.0.post2
-google-api-core==2.11.0
-google-api-python-client==2.88.0
-google-auth==2.19.1
-google-auth-httplib2==0.1.0
-google-auth-oauthlib==1.0.0
-googleapis-common-protos==1.59.0
-httplib2==0.22.0
-idna==3.4
-loguru==0.7.0
-oauthlib==3.2.2
-protobuf==4.23.2
-pyasn1==0.5.0
-pyasn1-modules==0.3.0
-pydantic==1.10.9
-pyparsing==3.0.9
-python-dotenv==1.0.0
-pytz==2023.3
-requests==2.31.0
-requests-oauthlib==1.3.1
-rsa==4.9
-six==1.16.0
-typing_extensions==4.6.3
-uritemplate==4.1.1
-urllib3==1.26.16
+# Loose constraints so this installs cleanly on Python 3.11 through 3.14.
+# Previous file had hard-pinned 2023-era versions that pip's resolver
+# could no longer satisfy together.
+
+requests>=2.31
+python-dotenv>=1.0
+pytz>=2023.3
+loguru>=0.7
+
+# Google Calendar
+google-api-python-client>=2.100
+google-auth>=2.23
+google-auth-httplib2>=0.2
+google-auth-oauthlib>=1.1
+
+# Web viewer
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# model.py uses pydantic v1, but nothing in the active code path imports it
+# anymore. Leaving it unpinned -- if you later remove or migrate model.py,
+# delete this line too.
+pydantic
+email-validator

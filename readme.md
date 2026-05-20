@@ -1,11 +1,63 @@
-# to run
+# quick start
 
-`source env/bin/activate`
-`python run_cal_update`
+```bash
+./bootstrap.sh                     # creates env/, installs deps (one-time)
+source env/bin/activate
+cp .env.example .env               # then fill in API_KEY, EMAIL, PASSWORD, etc.
+
+python verify_galaxy_creds.py      # smoke-test API credentials
+python run_cal_update.py           # sync loop + digest scheduler
+python run_web.py                  # live web viewer (separate process)
+python -m digest --dry-run         # render the digest to stdout
+```
+
+If you skip `bootstrap.sh` and `python3 -m venv env` was never run, the
+README's old `source env/bin/activate` will fail with "no such file or
+directory" -- that's why the bootstrap script exists.
 
 # Galaxy Digital Google Calendar Sync
 
-This project synchronizes events from Galaxy Digital to a Google Calendar. It automates the process of updating your Google Calendar with events managed in Galaxy Digital, ensuring that your calendar stays up-to-date without manual intervention.
+This project synchronizes events from Galaxy Digital to a Google Calendar.
+It also:
+
+- Tracks live check-in / check-out state per volunteer (kiosk-source
+  detection -- `hour_status` and `hour_date_end` are not reliable signals).
+- Stores everything in a local SQLite database (`galaxy_sync.sqlite3`) so
+  the calendar push, email digest, and web page all share one source of
+  truth.
+- Sends a daily HTML email digest (signed up / checked in / checked out /
+  no-show + repeat-offender table). Schedule and recipient configurable in
+  `.env`.
+- Exposes a local FastAPI page (default `http://127.0.0.1:8765`) for
+  real-time monitoring during shifts.
+
+## Architecture
+
+```
+              ┌──────────────────┐
+              │ Galaxy Digital   │
+              │   /responses     │
+              │   /hours         │
+              └────────┬─────────┘
+                       │ poll
+                       ▼
+   ┌────────────────────────────────────┐
+   │ sync.py   (ingest)                 │
+   │   ↳ checkin.py  (classify hours)   │
+   │   ↳ db.py       (SQLite I/O)       │
+   └────┬───────────────┬───────────────┘
+        │ shifts        │ status_history
+        ▼               ▼
+   ┌────────┐      ┌──────────┐      ┌──────────┐
+   │ gcal.py│      │ digest.py│      │ web.py   │
+   │  push  │      │  email   │      │  FastAPI │
+   └────────┘      └──────────┘      └──────────┘
+```
+
+`run_cal_update.py` drives the sync loop (2h full refresh, 60s scan when a
+shift is within ±1h, idle sleep otherwise) and fires the digest when the
+configured schedule (`DIGEST_SCHEDULE=daily@21:00` etc.) crosses a
+boundary. The web app reads the SQLite DB independently.
 
 ## Table of Contents
 

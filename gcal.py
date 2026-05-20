@@ -10,6 +10,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import time
 
+import checkin
+
 
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -33,16 +35,20 @@ def convert_to_iso(datetime_str):
     return datetime_str.replace(" ", "T")
 
 def create_attendees_list(users):
-    attendees = 'Signups: \n'
+    """Build the description block listing signups with status emoji.
+
+    Status comes from checkin.classify_hour() and is one of:
+      signed_up | checked_in | checked_out | manager_entered | no_show
+    See checkin.py for the rationale -- hour_status/hour_date_end are NOT
+    reliable real-time signals; only hour_source is.
+    """
+    lines = ['Signups:']
     for user in users:
-        if 'status' in user:
-            if user['checkin_status'] == 'pending':
-                attendees += f"🟡 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-            elif user['checkin_status'] == 'approved':
-                attendees += f"🟢 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-        else:
-            attendees += f"🔘 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-    return attendees
+        status = user.get('checkin_status') or checkin.SIGNED_UP
+        emoji = checkin.STATUS_EMOJI.get(status, '🔘')
+        lines.append(f"{emoji} {user.get('user_fname','')} {user.get('user_lname','')} "
+                     f"email: {user.get('user_email','')}")
+    return '\n'.join(lines) + '\n'
 
 #Hacky way to change the color of the event, https://lukeboyle.com/blog/posts/google-calendar-api-color-id
 def change_color(attendees):
