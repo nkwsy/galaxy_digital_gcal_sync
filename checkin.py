@@ -30,8 +30,8 @@ NO_SHOW = "no_show"          # response exists, no hour, shift end past
 
 STATUS_EMOJI = {
     SIGNED_UP: "🔘",
-    CHECKED_IN: "🟢",
-    CHECKED_OUT: "🔵",
+    CHECKED_IN: "🟡",    # at the kiosk, not yet checked out
+    CHECKED_OUT: "🟢",   # full kiosk flow complete
     MANAGER_ENTERED: "🟣",
     NO_SHOW: "🔴",
 }

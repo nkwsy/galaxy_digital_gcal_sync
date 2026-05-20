@@ -91,8 +91,8 @@ nav a:hover { text-decoration: underline; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #f0f0f0; font-size: 0.93em; }
 tr.no-show { background: #fff4f4; }
-tr.checked-in { background: #f1faf2; }
-tr.checked-out { background: #f1f5fa; }
+tr.checked-in { background: #fffbe6; }   /* 🟡 at the kiosk now */
+tr.checked-out { background: #f1faf2; }  /* 🟢 done for the day */
 .empty { color: #888; font-style: italic; }
 """
 

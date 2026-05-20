@@ -16,21 +16,63 @@ import checkin
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-creds = None
-if os.path.exists('token.json'):
-    creds = Credentials.from_authorized_user_file('token.json')
-if not creds or not creds.valid:
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-    else:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            'credentials.json', SCOPES)
-        creds = flow.run_local_server(port=0)
-    # Save the credentials for the next run
-    with open('token.json', 'w') as token:
-        token.write(creds.to_json())
+# OAuth used to run at module import, which made `import gcal` open a browser
+# whenever token.json was missing or stale. That meant every smoke test,
+# digest preview, and standalone tool had to stub the module out. Now the
+# credentials and service are built lazily on first use; importing gcal is
+# free.
 
-service = build('calendar', 'v3', credentials=creds)
+_service = None
+_token_path = os.getenv('GCAL_TOKEN_PATH', 'token.json')
+_creds_path = os.getenv('GCAL_CREDS_PATH', 'credentials.json')
+
+
+def _load_credentials() -> Credentials:
+    creds = None
+    if os.path.exists(_token_path):
+        creds = Credentials.from_authorized_user_file(_token_path)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists(_creds_path):
+                raise FileNotFoundError(
+                    f"No {_token_path} and no {_creds_path} -- cannot open OAuth flow. "
+                    "Set GCAL_TOKEN_PATH / GCAL_CREDS_PATH or place these files in cwd."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(_creds_path, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(_token_path, 'w') as token:
+            token.write(creds.to_json())
+    return creds
+
+
+def get_service():
+    """Return the cached Calendar v3 service, building it on first call.
+
+    Side effects (OAuth flow / disk write) happen only here, so importing
+    this module is free. Callers that previously read `gcal.service`
+    directly should switch to `gcal.get_service()`.
+    """
+    global _service
+    if _service is None:
+        _service = build('calendar', 'v3', credentials=_load_credentials())
+    return _service
+
+
+class _ServiceProxy:
+    """Backwards-compat shim so legacy `gcal.service` reads still work,
+    but no OAuth runs until something actually calls a method on it.
+
+    Once nothing references `gcal.service` directly, this proxy and the
+    module-level `service` alias can be deleted; callers should use
+    get_service() instead.
+    """
+    def __getattr__(self, item):
+        return getattr(get_service(), item)
+
+
+service = _ServiceProxy()
 def convert_to_iso(datetime_str):
     return datetime_str.replace(" ", "T")
 

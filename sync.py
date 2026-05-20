@@ -11,7 +11,7 @@ repeat-offender table works without anyone ever check-in/check-outing.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 import pytz
@@ -25,11 +25,15 @@ WATCH_WINDOW_H = 20  # how far around now to compute live statuses
 
 
 def sync_responses(api) -> int:
-    """Pull all /responses and upsert into the store.
+    """Pull all /responses and upsert into the store, then sweep no-shows.
 
     Returns the count of records ingested. We do a full sweep rather than
     cursor-since because new responses for upcoming shifts can appear at any
     historical position, and the volume is small enough (~8k rows total).
+
+    `mark_no_shows` is invoked at the end of every refresh so that shifts
+    which ended without any kiosk activity get stamped within the 2h full-
+    refresh cadence, not just when the next hot scan window happens to fire.
     """
     db.init()
     rows = api.get_data_from_api("responses") or []
@@ -37,9 +41,10 @@ def sync_responses(api) -> int:
         conn.execute("BEGIN")
         for r in rows:
             db.ingest_response(conn, r)
-        db.set_state(conn, "last_responses_sync_at", datetime.utcnow().isoformat(timespec="seconds"))
+        n_ns = mark_no_shows(conn)
+        db.set_state(conn, "last_responses_sync_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"))
         conn.execute("COMMIT")
-    logger.info(f"sync_responses ingested {len(rows)} rows")
+    logger.info(f"sync_responses ingested {len(rows)} rows; {n_ns} new no-shows")
     return len(rows)
 
 
@@ -73,7 +78,7 @@ def sync_hours(api, since: datetime | None = None) -> int:
                     user_id=sig.user_id,
                     status=cls,
                 )
-        db.set_state(conn, "last_hours_sync_at", datetime.utcnow().isoformat(timespec="seconds"))
+        db.set_state(conn, "last_hours_sync_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"))
         conn.execute("COMMIT")
     logger.info(f"sync_hours ingested {len(rows)} rows since {since_str}")
     return len(rows)
@@ -117,7 +122,7 @@ def mark_no_shows(conn) -> int:
             local_end = CHICAGO.localize(datetime.strptime(r["end_ts"], "%Y-%m-%d %H:%M:%S"))
             observed_at = local_end.astimezone(pytz.UTC).replace(tzinfo=None).isoformat(timespec="seconds")
         except (ValueError, TypeError):
-            observed_at = datetime.utcnow().isoformat(timespec="seconds")
+            observed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
         conn.execute(
             "INSERT INTO status_history(response_id,shift_id,user_id,status,observed_at) "
             "VALUES(?,?,?,?,?)",

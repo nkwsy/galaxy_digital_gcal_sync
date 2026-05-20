@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, Iterator
 
 import pytz
@@ -308,7 +308,7 @@ def record_status(conn: sqlite3.Connection, response_id: str, shift_id: str | No
     conn.execute(
         "INSERT INTO status_history(response_id,shift_id,user_id,status,observed_at) "
         "VALUES(?,?,?,?,?)",
-        (response_id, shift_id, user_id, status, datetime.utcnow().isoformat(timespec="seconds")),
+        (response_id, shift_id, user_id, status, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")),
     )
 
 
@@ -350,7 +350,7 @@ def signups_for_shift(conn: sqlite3.Connection, shift_id: str) -> list[sqlite3.R
 
 def repeat_offenders(conn: sqlite3.Connection, days: int = 30, min_count: int = 2) -> list[sqlite3.Row]:
     """Top users by NO_SHOW count in the last N days."""
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat(timespec="seconds")
+    cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat(timespec="seconds")
     return conn.execute(
         """SELECT
               u.id, u.fname, u.lname, u.email,

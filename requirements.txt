@@ -22,3 +22,6 @@ uvicorn[standard]>=0.27
 # delete this line too.
 pydantic
 email-validator
+
+# Dev / test
+pytest>=7

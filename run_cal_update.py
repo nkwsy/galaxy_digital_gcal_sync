@@ -4,7 +4,7 @@ import importlib
 import time
 from loguru import logger
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import pytz
 from dotenv import load_dotenv
 import requests
@@ -74,7 +74,7 @@ def maybe_send_digest():
         if ok:
             with db.connect() as conn:
                 db.set_state(conn, 'last_digest_sent_at',
-                             datetime.utcnow().isoformat(timespec='seconds'))
+                             datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds'))
             logger.info('digest sent')
         else:
             logger.info('digest skipped (missing DIGEST_EMAIL_TO or SMTP_HOST)')

@@ -162,8 +162,9 @@ class GalaxyAPI:
 
         with open("transformed_responses.json", "w") as f:
             json.dump(tr, f, default=str)
-        gcal.get_calendars(gcal.service)
-        gcal.update_calendar_events(tr, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
+        svc = gcal.get_service()
+        gcal.get_calendars(svc)
+        gcal.update_calendar_events(tr, svc, calendar_id=self.calendar_id, add_attendees=False)
         logger.debug("updated_responses complete")
 
     def user_checkin_update(self):
@@ -255,8 +256,9 @@ class GalaxyAPI:
                     if isinstance(shift['end_time'], str):
                         shift['end_time'] = datetime.strptime(shift['end_time'], '%Y-%m-%d %H:%M:%S')
                 
-                gcal.get_calendars(gcal.service)
-                gcal.update_calendar_events(shifts_to_update, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
+                svc = gcal.get_service()
+                gcal.get_calendars(svc)
+                gcal.update_calendar_events(shifts_to_update, svc, calendar_id=self.calendar_id, add_attendees=False)
         except Exception as e:
             logger.error(f"Error updating checkin shifts: {e}")
         return shifts_to_update
