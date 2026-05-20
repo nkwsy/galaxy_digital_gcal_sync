@@ -2,6 +2,12 @@
 credentials.json
 token.json
 
+# Runtime state -- contains volunteer PII, never commit
+transformed_responses.json
+*.sqlite3
+*.sqlite3-*
+debug.log
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

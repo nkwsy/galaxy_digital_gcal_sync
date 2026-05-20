@@ -10,39 +10,87 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import time
 
+import checkin
+
 
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-creds = None
-if os.path.exists('token.json'):
-    creds = Credentials.from_authorized_user_file('token.json')
-if not creds or not creds.valid:
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-    else:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            'credentials.json', SCOPES)
-        creds = flow.run_local_server(port=0)
-    # Save the credentials for the next run
-    with open('token.json', 'w') as token:
-        token.write(creds.to_json())
+# OAuth used to run at module import, which made `import gcal` open a browser
+# whenever token.json was missing or stale. That meant every smoke test,
+# digest preview, and standalone tool had to stub the module out. Now the
+# credentials and service are built lazily on first use; importing gcal is
+# free.
 
-service = build('calendar', 'v3', credentials=creds)
+_service = None
+_token_path = os.getenv('GCAL_TOKEN_PATH', 'token.json')
+_creds_path = os.getenv('GCAL_CREDS_PATH', 'credentials.json')
+
+
+def _load_credentials() -> Credentials:
+    creds = None
+    if os.path.exists(_token_path):
+        creds = Credentials.from_authorized_user_file(_token_path)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists(_creds_path):
+                raise FileNotFoundError(
+                    f"No {_token_path} and no {_creds_path} -- cannot open OAuth flow. "
+                    "Set GCAL_TOKEN_PATH / GCAL_CREDS_PATH or place these files in cwd."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(_creds_path, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(_token_path, 'w') as token:
+            token.write(creds.to_json())
+    return creds
+
+
+def get_service():
+    """Return the cached Calendar v3 service, building it on first call.
+
+    Side effects (OAuth flow / disk write) happen only here, so importing
+    this module is free. Callers that previously read `gcal.service`
+    directly should switch to `gcal.get_service()`.
+    """
+    global _service
+    if _service is None:
+        _service = build('calendar', 'v3', credentials=_load_credentials())
+    return _service
+
+
+class _ServiceProxy:
+    """Backwards-compat shim so legacy `gcal.service` reads still work,
+    but no OAuth runs until something actually calls a method on it.
+
+    Once nothing references `gcal.service` directly, this proxy and the
+    module-level `service` alias can be deleted; callers should use
+    get_service() instead.
+    """
+    def __getattr__(self, item):
+        return getattr(get_service(), item)
+
+
+service = _ServiceProxy()
 def convert_to_iso(datetime_str):
     return datetime_str.replace(" ", "T")
 
 def create_attendees_list(users):
-    attendees = 'Signups: \n'
+    """Build the description block listing signups with status emoji.
+
+    Status comes from checkin.classify_hour() and is one of:
+      signed_up | checked_in | checked_out | manager_entered | no_show
+    See checkin.py for the rationale -- hour_status/hour_date_end are NOT
+    reliable real-time signals; only hour_source is.
+    """
+    lines = ['Signups:']
     for user in users:
-        if 'status' in user:
-            if user['checkin_status'] == 'pending':
-                attendees += f"🟡 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-            elif user['checkin_status'] == 'approved':
-                attendees += f"🟢 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-        else:
-            attendees += f"🔘 {user['user_fname']} {user['user_lname']} email: {user['user_email']} \n"
-    return attendees
+        status = user.get('checkin_status') or checkin.SIGNED_UP
+        emoji = checkin.STATUS_EMOJI.get(status, '🔘')
+        lines.append(f"{emoji} {user.get('user_fname','')} {user.get('user_lname','')} "
+                     f"email: {user.get('user_email','')}")
+    return '\n'.join(lines) + '\n'
 
 #Hacky way to change the color of the event, https://lukeboyle.com/blog/posts/google-calendar-api-color-id
 def change_color(attendees):
@@ -86,6 +134,12 @@ def update_calendar_events(shifts, service, calendar_id='primary', add_attendees
             },
             'colorId': change_color(shift['slots_filled']),
         }
+        # Google Calendar's `location` field powers "Open in Maps" on
+        # mobile and the geocoded preview on desktop. Only set it when
+        # the need had an address; virtual events stay locationless.
+        loc = shift.get('location')
+        if loc:
+            event['location'] = loc
         # Get the list of event attendees
         if add_attendees:
             event['attendees'] = [{'email': 'test@urbanriv.org'}]
@@ -106,6 +160,12 @@ def update_calendar_events(shifts, service, calendar_id='primary', add_attendees
                 if error.resp.status == 409:
                     logger.error(f"Event with this ID already exists. Consider updating it instead.")
                     break
+                elif error.resp.status == 400:
+                    # Almost always a malformed event id (Google requires
+                    # RFC2938 base32hex: lowercase a-v + 0-9). Re-raise so
+                    # callers see the failure instead of silently moving on.
+                    logger.error(f"Insert rejected for event id {event_id!r}: {error}")
+                    raise
                 elif error.resp.status == 403 and 'rateLimitExceeded' in str(error):
                     wait_time = (2 ** attempt)  # Exponential backoff: 2, 4, 8, 16, 32 seconds
                     logger.error(f"Rate limit exceeded. Attempt {attempt}/{MAX_RETRIES}. Waiting {wait_time} seconds before retrying...")
