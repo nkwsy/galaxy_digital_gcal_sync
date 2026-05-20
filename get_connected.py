@@ -135,6 +135,10 @@ class GalaxyAPI:
 
         # Build the shift roster from SQLite for gcal. Same dict shape the
         # gcal layer already expects (start_time / end_time / users / etc).
+        # We also fingerprint each shift here so the 2h refresh only pushes
+        # the ones whose displayed content actually changed -- otherwise we
+        # would UPDATE every event in the calendar (~1500 for this org)
+        # every refresh, which works but is noisy and chews quota.
         tr: list[dict] = []
         with db.connect() as conn:
             shifts = conn.execute(
@@ -155,6 +159,18 @@ class GalaxyAPI:
                         "user_email": sg["email"],
                         "checkin_status": sg["classification"] or checkin.SIGNED_UP,
                     })
+                # Fingerprint = (slot count, location, user statuses).
+                fp_input = "|".join([
+                    str(s["slots"] or ""),
+                    s["location"] or "",
+                    ",".join(sorted(f"{u['response_id']}:{u['checkin_status']}" for u in users)),
+                ])
+                fp = hashlib.sha1(fp_input.encode()).hexdigest()
+                key = f"gcal_fp:{s['id']}"
+                prev_fp = db.get_state(conn, key)
+                if prev_fp == fp:
+                    continue
+                db.set_state(conn, key, fp)
                 tr.append({
                     "id": s["id"],
                     "start_time": datetime.strptime(s["start_ts"], "%Y-%m-%d %H:%M:%S"),
@@ -170,6 +186,10 @@ class GalaxyAPI:
 
         with open("transformed_responses.json", "w") as f:
             json.dump(tr, f, default=str)
+        if not tr:
+            logger.debug("update_responses: nothing changed since last push")
+            return
+        logger.info(f"update_responses: pushing {len(tr)} changed shift(s) to gcal")
         svc = gcal.get_service()
         gcal.get_calendars(svc)
         gcal.update_calendar_events(tr, svc, calendar_id=self.calendar_id, add_attendees=False)
