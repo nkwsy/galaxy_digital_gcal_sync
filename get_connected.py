@@ -54,38 +54,45 @@ class GalaxyAPI:
         all_data = []
         records = 0
         page_return = 150
-        headers = {
-            'Accept': 'application/json',
-            'Authorization': f"Bearer {self.token}",
-        }
         query = {
             'per_page': 150,
             'show_inactive': 'No',
         }
-        
+
         # Merge additional parameters if provided
         if additional_params:
             query.update(additional_params)
-        
+
+        relogin_attempts = 0
         while True:
             if records != 0:
                 query['since_id'] = all_data[-1]['id']
                 logger.debug(f"Since ID: {query['since_id']}")
-            
+
+            headers = {
+                'Accept': 'application/json',
+                'Authorization': f"Bearer {self.token}",
+            }
             response = requests.get(f"{self.url}{url_path}", headers=headers, json=query)
-            
+
             if response.status_code == 200:
                 data = response.json()
-                all_data.extend(data.get('data'))  # If the response was successful, no Exception will be raised
+                all_data.extend(data.get('data'))
                 records += len(data.get('data'))
                 page_return = len(data.get('data'))
-                # logger.debug(f"Page: {page_return}, Records: {records}")
-                # logger.info(f"Data: {data.get('data')}")
                 if page_return != 150:
                     logger.debug(f"Fin Page: {page_return}, Records: {records}")
                     return all_data
+            elif response.status_code == 401 and relogin_attempts == 0:
+                # Token expired mid-paginate. Re-login once and retry the
+                # current page (without bumping records, so the same
+                # since_id is used). Avoids a hard fail after long runs.
+                logger.warning("401 on /%s -- re-authenticating once", url_path)
+                self.token = self.login()
+                relogin_attempts += 1
+                continue
             else:
-                response.raise_for_status()  # Raises stored HTTPError, if one occurred.
+                response.raise_for_status()
 
     def get_needs(self):
         url_path = 'needs'
@@ -132,7 +139,7 @@ class GalaxyAPI:
         with db.connect() as conn:
             shifts = conn.execute(
                 """SELECT s.id, s.start_ts, s.end_ts, s.duration_min, s.slots,
-                          s.need_id, n.title
+                          s.need_id, n.title, n.location
                    FROM shifts s LEFT JOIN needs n ON n.id = s.need_id
                 """,
             ).fetchall()
@@ -156,6 +163,7 @@ class GalaxyAPI:
                     "duration": s["duration_min"],
                     "slots": s["slots"],
                     "title": s["title"],
+                    "location": s["location"],
                     "users": users,
                     "slots_filled": len(users),
                 })
@@ -241,6 +249,7 @@ class GalaxyAPI:
                         "duration": s["duration_min"],
                         "slots": s["slots"],
                         "title": s["title"],
+                        "location": s["location"],
                         "users": users,
                         "slots_filled": len(users),
                     })

@@ -134,6 +134,12 @@ def update_calendar_events(shifts, service, calendar_id='primary', add_attendees
             },
             'colorId': change_color(shift['slots_filled']),
         }
+        # Google Calendar's `location` field powers "Open in Maps" on
+        # mobile and the geocoded preview on desktop. Only set it when
+        # the need had an address; virtual events stay locationless.
+        loc = shift.get('location')
+        if loc:
+            event['location'] = loc
         # Get the list of event attendees
         if add_attendees:
             event['attendees'] = [{'email': 'test@urbanriv.org'}]
@@ -154,6 +160,12 @@ def update_calendar_events(shifts, service, calendar_id='primary', add_attendees
                 if error.resp.status == 409:
                     logger.error(f"Event with this ID already exists. Consider updating it instead.")
                     break
+                elif error.resp.status == 400:
+                    # Almost always a malformed event id (Google requires
+                    # RFC2938 base32hex: lowercase a-v + 0-9). Re-raise so
+                    # callers see the failure instead of silently moving on.
+                    logger.error(f"Insert rejected for event id {event_id!r}: {error}")
+                    raise
                 elif error.resp.status == 403 and 'rateLimitExceeded' in str(error):
                     wait_time = (2 ** attempt)  # Exponential backoff: 2, 4, 8, 16, 32 seconds
                     logger.error(f"Rate limit exceeded. Attempt {attempt}/{MAX_RETRIES}. Waiting {wait_time} seconds before retrying...")

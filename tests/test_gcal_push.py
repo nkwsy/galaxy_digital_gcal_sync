@@ -47,6 +47,7 @@ def _make_shift(shift_id: str, when: datetime) -> dict:
         "slots": 4,
         "start_time": when,
         "end_time": when + timedelta(hours=1),
+        "location": "905 W Eastman St., Chicago, IL 60642",
         "users": [
             {
                 "id": "u1",
@@ -86,9 +87,12 @@ def test_create_update_delete_roundtrip():
     """
     svc = gcal.get_service()
     # Pick an event id that's globally unique to this run so we don't
-    # collide with previous test runs or real data. gcal IDs must be
-    # base32hex-ish (lowercase a-v + 0-9), 5-1024 chars.
-    event_id = f"pytest{uuid.uuid4().hex[:20]}"
+    # collide with previous test runs or real data. Google's event IDs
+    # are RFC2938 base32hex: lowercase a-v + 0-9 only, 5-1024 chars.
+    # uuid.uuid4().hex (0-9 + a-f) is always valid; prefixing with
+    # "demoshift" (d,e,m,o,s,h,i,f,t are all in a-v) keeps it readable
+    # in the calendar's all-events view.
+    event_id = f"demoshift{uuid.uuid4().hex}"
     when = datetime.now() + timedelta(days=365)  # far in the future so it
                                                   # doesn't pollute "today" views
     shift = _make_shift(event_id, when)
@@ -101,6 +105,7 @@ def test_create_update_delete_roundtrip():
         got = _fetch(svc, event_id)
         assert got["summary"].startswith("PYTEST roundtrip")
         assert "(2/4)" in got["summary"]
+        assert got.get("location") == "905 W Eastman St., Chicago, IL 60642"
         # Emoji-decorated signup list should be in the description.
         desc = got.get("description", "")
         assert "Alice Test" in desc

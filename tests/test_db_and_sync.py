@@ -148,6 +148,46 @@ def test_record_status_dedupes_same_status_in_a_row(db_conn):
     assert [r["status"] for r in rows] == [checkin.CHECKED_IN, checkin.CHECKED_OUT]
 
 
+def test_compose_location_full_address():
+    n = {"need_address": "905 W Eastman St.", "need_address2": "",
+         "need_city": "Chicago", "need_state": "IL", "need_postal": "60642"}
+    assert db.compose_location(n) == "905 W Eastman St., Chicago, IL 60642"
+
+
+def test_compose_location_with_unit():
+    n = {"need_address": "1440 N Kingsbury St", "need_address2": "suite 005",
+         "need_city": "Chicago", "need_state": "IL", "need_postal": "60642"}
+    assert db.compose_location(n) == "1440 N Kingsbury St, suite 005, Chicago, IL 60642"
+
+
+def test_compose_location_missing_pieces_skipped():
+    n = {"need_address": "Park entrance", "need_address2": None,
+         "need_city": "Chicago", "need_state": "", "need_postal": ""}
+    assert db.compose_location(n) == "Park entrance, Chicago"
+
+
+def test_compose_location_none_when_all_empty():
+    assert db.compose_location({}) is None
+    assert db.compose_location({"need_address": "", "need_city": ""}) is None
+
+
+def test_upsert_need_writes_location_and_preserves_on_null(db_conn):
+    db.upsert_need(db_conn, {
+        "id": "n1", "need_title": "Test",
+        "need_address": "100 Main", "need_city": "Chicago",
+        "need_state": "IL", "need_postal": "60601",
+    })
+    row = db_conn.execute("SELECT title, location FROM needs WHERE id='n1'").fetchone()
+    assert row["location"] == "100 Main, Chicago, IL 60601"
+
+    # Later ingest path (e.g. a /responses sweep) carries no address.
+    # The location must survive untouched.
+    db.upsert_need(db_conn, {"id": "n1", "need_title": "Updated title"})
+    row = db_conn.execute("SELECT title, location FROM needs WHERE id='n1'").fetchone()
+    assert row["title"] == "Updated title"
+    assert row["location"] == "100 Main, Chicago, IL 60601"
+
+
 def test_repeat_offenders_respects_window(db_conn):
     # Two users, each with 2 historical no-shows: one inside 30d, one outside.
     db.ingest_response(db_conn, _resp("r_a1", "u_a", "s_a1",

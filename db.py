@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS needs (
     id            TEXT PRIMARY KEY,
     title         TEXT,
     agency_name   TEXT,
+    location      TEXT,      -- composed from need_address/city/state/postal
     updated_at    TEXT
 );
 
@@ -126,9 +127,20 @@ def connect(path: str = DB_PATH) -> Iterator[sqlite3.Connection]:
 
 
 def init(path: str = DB_PATH) -> None:
-    """Create tables if they don't exist. Idempotent."""
+    """Create tables if they don't exist. Idempotent.
+
+    Includes a lightweight column-add migration for existing databases
+    that pre-date the `needs.location` column.
+    """
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        _migrate_add_column(conn, "needs", "location", "TEXT")
+
+
+def _migrate_add_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if col not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 # ---------- scan_state -----------------------------------------------------
@@ -168,28 +180,57 @@ def upsert_user(conn: sqlite3.Connection, u: dict) -> None:
     )
 
 
+def compose_location(n: dict) -> str | None:
+    """Build a single-line address string from a /needs payload.
+
+    Skips empty pieces, returns None when the need has no address at all
+    (e.g. virtual_need=Yes events). Format mimics what Google Maps will
+    happily geocode: "street, city, ST zip".
+    """
+    if not n:
+        return None
+    street_bits = [n.get("need_address"), n.get("need_address2")]
+    street = ", ".join(s for s in street_bits if s and s.strip())
+    city = (n.get("need_city") or "").strip()
+    state = (n.get("need_state") or "").strip()
+    postal = (n.get("need_postal") or "").strip()
+    csz_parts = [city]
+    if state or postal:
+        csz_parts.append(f"{state} {postal}".strip())
+    city_state_zip = ", ".join(p for p in csz_parts if p)
+    pieces = [p for p in (street, city_state_zip) if p]
+    return ", ".join(pieces) if pieces else None
+
+
 def upsert_need(conn: sqlite3.Connection, n: dict, agency_name: str | None = None) -> None:
     """Upsert a need. `agency_name` is taken explicitly because the /responses
     payload exposes the agency at the response level, while /needs exposes it
     nested under `agency`. Caller passes whichever it has; we never overwrite
     a non-null value with NULL.
+
+    `location` is composed from need_address/city/state/postal. The same
+    COALESCE pattern preserves a previously-known location when a later
+    upsert (e.g. via /responses, which carries no address) has none.
     """
     if not n:
         return
     if not agency_name and isinstance(n.get("agency"), dict):
         agency_name = (n.get("agency") or {}).get("agency_name")
+    location = compose_location(n)
     conn.execute(
-        """INSERT INTO needs(id,title,agency_name,updated_at)
-           VALUES(:id,:title,:agency,:updated_at)
+        """INSERT INTO needs(id,title,agency_name,location,updated_at)
+           VALUES(:id,:title,:agency,:location,:updated_at)
            ON CONFLICT(id) DO UPDATE SET
              title=excluded.title,
              agency_name=COALESCE(excluded.agency_name, needs.agency_name),
+             location=COALESCE(excluded.location, needs.location),
              updated_at=excluded.updated_at
         """,
         {
             "id": str(n["id"]),
             "title": n.get("need_title"),
             "agency": agency_name,
+            "location": location,
             "updated_at": n.get("updated_at"),
         },
     )

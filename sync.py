@@ -24,6 +24,25 @@ CHICAGO = pytz.timezone("America/Chicago")
 WATCH_WINDOW_H = 20  # how far around now to compute live statuses
 
 
+def sync_needs(api) -> int:
+    """Pull all active /needs and upsert. The /responses payload doesn't
+    include addresses -- only the full need record does. We run this on
+    the same 2h cadence as sync_responses to keep needs.location fresh
+    enough for the gcal push.
+    """
+    db.init()
+    rows = api.get_data_from_api("needs", {"need_status": "active"}) or []
+    with db.connect() as conn:
+        conn.execute("BEGIN")
+        for n in rows:
+            db.upsert_need(conn, n)
+        db.set_state(conn, "last_needs_sync_at",
+                     datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"))
+        conn.execute("COMMIT")
+    logger.info(f"sync_needs ingested {len(rows)} active needs")
+    return len(rows)
+
+
 def sync_responses(api) -> int:
     """Pull all /responses and upsert into the store, then sweep no-shows.
 
@@ -31,11 +50,14 @@ def sync_responses(api) -> int:
     cursor-since because new responses for upcoming shifts can appear at any
     historical position, and the volume is small enough (~8k rows total).
 
-    `mark_no_shows` is invoked at the end of every refresh so that shifts
-    which ended without any kiosk activity get stamped within the 2h full-
-    refresh cadence, not just when the next hot scan window happens to fire.
+    Also kicks off sync_needs first so any new needs introduced between
+    full refreshes get their addresses indexed before we render them. And
+    mark_no_shows is invoked at the end so shifts that ended without any
+    kiosk activity get stamped within the 2h full-refresh cadence, not
+    just when the next hot scan window happens to fire.
     """
     db.init()
+    sync_needs(api)
     rows = api.get_data_from_api("responses") or []
     with db.connect() as conn:
         conn.execute("BEGIN")
