@@ -5,6 +5,7 @@ import json
 import gcal
 import model
 from datetime import datetime
+import time
 import pytz
 from loguru import logger
 import model
@@ -42,23 +43,30 @@ class GalaxyAPI:
         else:
             response.raise_for_status()  # Raises stored HTTPError, if one occurred.
 
-    def get_data_from_api(self, url_path):
+    def get_data_from_api(self, url_path, additional_params=None):
         all_data = []
         records = 0
         page_return = 150
         headers = {
-        'Accept': 'application/json',
-        'Authorization': f"Bearer {self.token}",
+            'Accept': 'application/json',
+            'Authorization': f"Bearer {self.token}",
         }
         query = {
             'per_page': 150,
             'show_inactive': 'No',
         }
+        
+        # Merge additional parameters if provided
+        if additional_params:
+            query.update(additional_params)
+        
         while True:
             if records != 0:
                 query['since_id'] = all_data[-1]['id']
                 logger.debug(f"Since ID: {query['since_id']}")
-            response = requests.get(f"{self.url}{url_path}", headers=headers,json=query)
+            
+            response = requests.get(f"{self.url}{url_path}", headers=headers, json=query)
+            
             if response.status_code == 200:
                 data = response.json()
                 all_data.extend(data.get('data'))  # If the response was successful, no Exception will be raised
@@ -100,14 +108,112 @@ class GalaxyAPI:
         return list(shifts_dict.values())
 
     def update_responses(self):
+
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        # data = self.get_data_from_api(f'responses?since_updated={current_date}')
         data = self.get_data_from_api('responses')
         # response = model.ResponseObject.parse_obj(data[3])
         # print(response)
         # return data
         tr = self.transform_responses(data)
+        # Save transformed responses to JSON file
+        with open('transformed_responses.json', 'w') as f:
+            json.dump(tr, f, default=str)
         gcal.get_calendars(gcal.service)
         gcal.update_calendar_events(tr, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
         logger.debug(f"updated_responses complete")
+
+    def user_checkin_update(self):
+        with open('transformed_responses.json', 'r') as f:
+            tr = json.load(f)
+        shifts_to_update = []
+        
+        try:
+            # Get current date in YYYY-MM-DD format
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            # Fetch all hours updated today in a single API call
+            hours_data = self.get_data_from_api('hours', {'since_updated': current_date})
+            
+            # Create a mapping of user IDs to their hour status
+            user_status_map = {}
+            if hours_data is not None:
+                for hour in hours_data:
+                    if 'user' in hour and 'id' in hour['user']:
+                        user_id = hour['user']['id']
+                        hour_status = hour.get('hour_status', '')
+                        # user_status_map[user_id] = hour_status
+                        user_status_map[user_id] = hour
+            
+            for shift in tr:
+                current_time = datetime.now(pytz.timezone('America/Chicago'))
+                shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
+                time_diff = current_time - shift_start
+                if time_diff.total_seconds() <= 72000 and time_diff.total_seconds() >= -72000:
+                    shift_updated = False
+                    for user in shift['users']:
+                        # Check if user ID is in our map of updated statuses
+                        if user['id'] in user_status_map:
+                            user['status'] = user_status_map[user['id']]['hour_status']
+                            user['created_at'] = user_status_map[user['id']]['created_at']
+                            user['updated_at'] = user_status_map[user['id']]['updated_at']
+                            user['hour_source'] = user_status_map[user['id']]['hour_source']
+                            user['hours_id'] = user_status_map[user['id']]
+                            #Check if the user has checked in by comparing the created_at and updated_at
+                            if user['created_at'] == user['updated_at']:
+                                user['checkin_status'] = 'pending'
+                            else:
+                                user['checkin_status'] = 'approved'
+                            logger.debug(f"user: {user}")
+                            shift_updated = True
+                    
+                    # Only add shifts that had users with updated statuses
+                    if shift_updated:
+                        shifts_to_update.append(shift)
+            
+            if len(shifts_to_update) > 0:
+                logger.debug(f"Updating {len(shifts_to_update)} shifts")
+                logger.debug(f"shifts_to_update: {shifts_to_update}")
+                
+                # Convert string datetime values to datetime objects before passing to gcal
+                for shift in shifts_to_update:
+                    if isinstance(shift['start_time'], str):
+                        shift['start_time'] = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S')
+                    if isinstance(shift['end_time'], str):
+                        shift['end_time'] = datetime.strptime(shift['end_time'], '%Y-%m-%d %H:%M:%S')
+                
+                gcal.get_calendars(gcal.service)
+                gcal.update_calendar_events(shifts_to_update, gcal.service, calendar_id=self.calendar_id, add_attendees=False)
+        except Exception as e:
+            logger.error(f"Error updating checkin shifts: {e}")
+        return shifts_to_update
+    
+    def get_next_shift(self):
+        with open('transformed_responses.json', 'r') as f:
+            tr = json.load(f)
+        next_shift_time_diff = 0
+        for shift in tr:
+            current_time = datetime.now(pytz.timezone('America/Chicago'))
+            shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
+            time_diff = current_time - shift_start
+            if time_diff.total_seconds() > next_shift_time_diff:
+                next_shift_time_diff = time_diff.total_seconds()
+                next_shift = shift
+        return next_shift_time_diff
+    
+    def get_last_shift(self):
+        with open('transformed_responses.json', 'r') as f:
+            tr = json.load(f)
+        #Larger than 10000 is a long time ago
+        last_shift_time_diff = 10000
+        for shift in tr:
+            current_time = datetime.now(pytz.timezone('America/Chicago'))
+            shift_start = datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.timezone('America/Chicago'))
+            time_diff = shift_start - current_time
+            if 0 < time_diff.total_seconds() < last_shift_time_diff:
+                last_shift_time_diff = time_diff.total_seconds()
+                last_shift = shift
+        return last_shift_time_diff
+            
 
     def get_user_list(self, api_key, offset=0, limit=50):
         url = 'https://volunteerapi.com/agencies'
