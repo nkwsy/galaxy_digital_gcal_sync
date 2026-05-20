@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS users (
     lname         TEXT,
     email         TEXT,
     phone         TEXT,
+    address       TEXT,                       -- composed: street, city, ST zip
+    user_status   TEXT,                       -- active|pending|imported|inactive
+    last_enriched TEXT,                       -- iso ts of last full /users/{id} pull
     updated_at    TEXT
 );
 
@@ -106,6 +109,19 @@ CREATE TABLE IF NOT EXISTS scan_state (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS manual_overrides (
+    -- Buttons in web.py write here. The classifier reads this table FIRST
+    -- and only falls through to hour_source parsing when nothing's set.
+    -- This makes the manual web UI immune to the "Galaxy POST roundtrips
+    -- as /api/createHour and gets classified as manager_entered" flicker.
+    response_id      TEXT PRIMARY KEY,
+    status           TEXT NOT NULL,                -- checked_in | checked_out
+    set_at           TEXT NOT NULL,                -- UTC ISO
+    galaxy_hour_id   TEXT,                          -- nullable; filled after Galaxy POST returns
+    galaxy_post_ok   INTEGER NOT NULL DEFAULT 0,    -- 0/1 -- did the Galaxy write succeed?
+    galaxy_last_err  TEXT
+);
 """
 
 
@@ -135,6 +151,11 @@ def init(path: str = DB_PATH) -> None:
     with connect(path) as conn:
         conn.executescript(SCHEMA)
         _migrate_add_column(conn, "needs", "location", "TEXT")
+        # User-profile columns added after the initial release; existing
+        # databases get them via the same idempotent ALTER TABLE path.
+        _migrate_add_column(conn, "users", "address", "TEXT")
+        _migrate_add_column(conn, "users", "user_status", "TEXT")
+        _migrate_add_column(conn, "users", "last_enriched", "TEXT")
 
 
 def _migrate_add_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
@@ -160,13 +181,54 @@ def set_state(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 # ---------- ingest helpers -------------------------------------------------
 
-def upsert_user(conn: sqlite3.Connection, u: dict) -> None:
+def compose_user_address(u: dict) -> str | None:
+    """Build a single-line address string from a /users payload.
+
+    Same convention as compose_location(): "street, city, ST zip", skipping
+    empty pieces, returning None if the user has nothing usable. Lets the
+    /user/{id} page show one tidy line without conditional branching.
+    """
+    if not u:
+        return None
+    street_bits = [u.get("user_address"), u.get("user_address2")]
+    street = ", ".join(s for s in street_bits if s and s.strip())
+    city = (u.get("user_city") or "").strip()
+    state = (u.get("user_state") or "").strip()
+    postal = (u.get("user_postal") or "").strip()
+    csz_parts = [city]
+    if state or postal:
+        csz_parts.append(f"{state} {postal}".strip())
+    city_state_zip = ", ".join(p for p in csz_parts if p)
+    pieces = [p for p in (street, city_state_zip) if p]
+    return ", ".join(pieces) if pieces else None
+
+
+def upsert_user(conn: sqlite3.Connection, u: dict, enriched: bool = False) -> None:
+    """Upsert one /users (or /responses-embedded user) record.
+
+    `enriched=True` means the caller is passing the full /users/{id} payload
+    -- bumps last_enriched so the lazy-refresh in web.py knows we have the
+    extended fields. /responses ingests pass enriched=False; those keep
+    last_enriched unchanged (which keeps an old timestamp ALIVE if we had
+    one).
+
+    All COALESCEs preserve previously-known values when the current payload
+    is sparse -- a /responses sweep (which only has fname/lname/email) must
+    NOT clobber an address we set earlier.
+    """
+    address = compose_user_address(u) if enriched else None
     conn.execute(
-        """INSERT INTO users(id,fname,lname,email,phone,updated_at)
-           VALUES(:id,:fname,:lname,:email,:phone,:updated_at)
+        """INSERT INTO users(id,fname,lname,email,phone,address,user_status,
+                              last_enriched,updated_at)
+           VALUES(:id,:fname,:lname,:email,:phone,:address,:status,
+                  :last_enriched,:updated_at)
            ON CONFLICT(id) DO UPDATE SET
              fname=excluded.fname, lname=excluded.lname,
-             email=excluded.email, phone=excluded.phone,
+             email=excluded.email,
+             phone=COALESCE(excluded.phone, users.phone),
+             address=COALESCE(excluded.address, users.address),
+             user_status=COALESCE(excluded.user_status, users.user_status),
+             last_enriched=COALESCE(excluded.last_enriched, users.last_enriched),
              updated_at=excluded.updated_at
         """,
         {
@@ -175,6 +237,10 @@ def upsert_user(conn: sqlite3.Connection, u: dict) -> None:
             "lname": u.get("user_lname"),
             "email": u.get("user_email"),
             "phone": u.get("user_phone") or u.get("user_phone_cell"),
+            "address": address,
+            "status": u.get("user_status") if enriched else None,
+            "last_enriched": (datetime.now(timezone.utc).replace(tzinfo=None)
+                              .isoformat(timespec="seconds") if enriched else None),
             "updated_at": u.get("updated_at"),
         },
     )
@@ -351,6 +417,49 @@ def record_status(conn: sqlite3.Connection, response_id: str, shift_id: str | No
         "VALUES(?,?,?,?,?)",
         (response_id, shift_id, user_id, status, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")),
     )
+
+
+# ---------- manual_overrides ----------------------------------------------
+
+def get_override(conn: sqlite3.Connection, response_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT status, set_at, galaxy_hour_id, galaxy_post_ok, galaxy_last_err "
+        "FROM manual_overrides WHERE response_id = ?",
+        (response_id,),
+    ).fetchone()
+
+
+def set_override(conn: sqlite3.Connection, response_id: str, status: str,
+                 galaxy_hour_id: str | None = None,
+                 galaxy_post_ok: bool = False,
+                 galaxy_last_err: str | None = None) -> None:
+    conn.execute(
+        """INSERT INTO manual_overrides(response_id,status,set_at,galaxy_hour_id,
+                                         galaxy_post_ok,galaxy_last_err)
+           VALUES(?,?,?,?,?,?)
+           ON CONFLICT(response_id) DO UPDATE SET
+             status=excluded.status,
+             set_at=excluded.set_at,
+             galaxy_hour_id=COALESCE(excluded.galaxy_hour_id, manual_overrides.galaxy_hour_id),
+             galaxy_post_ok=excluded.galaxy_post_ok,
+             galaxy_last_err=excluded.galaxy_last_err
+        """,
+        (
+            response_id, status,
+            datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
+            galaxy_hour_id, 1 if galaxy_post_ok else 0, galaxy_last_err,
+        ),
+    )
+
+
+def clear_override(conn: sqlite3.Connection, response_id: str) -> sqlite3.Row | None:
+    """Pop the override row (returns it if it existed). Caller uses the
+    returned galaxy_hour_id to DELETE the Galaxy-side hour if any.
+    """
+    row = get_override(conn, response_id)
+    conn.execute("DELETE FROM manual_overrides WHERE response_id = ?",
+                 (response_id,))
+    return row
 
 
 # ---------- query helpers --------------------------------------------------

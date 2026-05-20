@@ -28,9 +28,10 @@ class GalaxyAPI:
         self.password = os.getenv('PASSWORD')
         self.calendar_id = os.getenv('CALENDAR_ID')
         self.url = 'https://api.galaxydigital.com/api/'
+        self.api_user_id: str | None = None      # filled by login()
         self.token = self.login()
         self.shifts = {}
-        self.login_responce = None 
+        self.login_responce = None
     def login(self):
         login_url = 'https://api.galaxydigital.com/api/users/login'
         headers = {
@@ -45,10 +46,16 @@ class GalaxyAPI:
         response = requests.post(login_url, headers=headers, json=data)
         if response.status_code == 200:
             resp = response.json()
-            self.login_responce = resp['data'] 
-            return resp['data']['token']  # If the response was successful, no Exception will be raised
+            self.login_responce = resp['data']
+            # Capture the authenticated user's id so post_hours/etc. can be
+            # attributed correctly in Galaxy's audit log, and so any future
+            # parsing of hour_source for "by user <id>" knows whose writes
+            # to treat as ours.
+            user = resp['data'].get('user') or {}
+            self.api_user_id = str(user.get('id')) if user.get('id') else None
+            return resp['data']['token']
         else:
-            response.raise_for_status()  # Raises stored HTTPError, if one occurred.
+            response.raise_for_status()
 
     def get_data_from_api(self, url_path, additional_params=None):
         all_data = []
@@ -99,6 +106,72 @@ class GalaxyAPI:
         data = self.get_data_from_api(url_path)
 
         return data['data']
+
+    # -------- /hours write methods (used by manual web check-in path) -------
+    #
+    # We intentionally only call these from web.py's button handlers. The
+    # background sync loop never POSTs -- it only reads. That keeps Galaxy
+    # Digital authoritative for everything except deliberate operator clicks.
+
+    def _hours_request(self, method: str, path: str, body: dict) -> dict:
+        """One-shot /hours write with a single re-login on 401."""
+        for attempt in range(2):
+            headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': f"Bearer {self.token}",
+            }
+            r = requests.request(method, f"{self.url}{path}", headers=headers, json=body, timeout=15)
+            if r.status_code == 401 and attempt == 0:
+                logger.warning(f"{method} /{path} -> 401, re-authenticating once")
+                self.token = self.login()
+                continue
+            r.raise_for_status()
+            return r.json() if r.text else {}
+        raise RuntimeError("unreachable")
+
+    def post_hours(self, response_id: str, hour_start: datetime,
+                   hour_hours: float, hour_status: str = 'pending') -> dict:
+        """POST a new /hours record. Returns Galaxy's response dict.
+
+        Required by the API: hour_start (datetime), hour_hours (decimal),
+        hour_status (enum). response_id ties this to a specific signup --
+        without it Galaxy returns 403 'User has not responded to that need'.
+        """
+        return self._hours_request("POST", "hours", {
+            "response_id": str(response_id),
+            "hour_start":  hour_start.strftime("%Y-%m-%d %H:%M:%S"),
+            "hour_hours":  f"{hour_hours:.2f}",
+            "hour_status": hour_status,
+        })
+
+    def update_hours(self, hour_id: str, hour_hours: float,
+                     hour_status: str = 'entered') -> dict:
+        """PUT an existing /hours record. Used for the checkout transition:
+        we re-set hour_hours to the actual elapsed time and flip status
+        from 'pending' to 'entered'.
+        """
+        return self._hours_request("PUT", f"hours/{hour_id}", {
+            "hour_hours":  f"{hour_hours:.2f}",
+            "hour_status": hour_status,
+        })
+
+    def delete_hours(self, hour_id: str) -> None:
+        """Soft-DELETE an /hours record. Used when an operator clicks 'Undo'."""
+        # 204 No Content; nothing to parse.
+        for attempt in range(2):
+            headers = {
+                'Accept': 'application/json',
+                'Authorization': f"Bearer {self.token}",
+            }
+            r = requests.delete(f"{self.url}hours/{hour_id}", headers=headers, timeout=15)
+            if r.status_code == 401 and attempt == 0:
+                self.token = self.login()
+                continue
+            if r.status_code in (204, 200, 404):
+                # 404 == already gone, treat as success for idempotency.
+                return
+            r.raise_for_status()
 
     def transform_responses(self, responses):
         shifts_dict = {}

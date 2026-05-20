@@ -24,6 +24,48 @@ CHICAGO = pytz.timezone("America/Chicago")
 WATCH_WINDOW_H = 20  # how far around now to compute live statuses
 
 
+def enrich_user(api, user_id: str) -> dict | None:
+    """Pull the full /users record for one user and persist it locally.
+
+    The /responses payload only carries id/fname/lname/email per user, so
+    the phone / address / status columns stay NULL after a vanilla refresh.
+    Called by web.py the first time an operator views /user/{id}.
+
+    Strategy:
+      1. Look up the user's email in local SQLite.
+      2. Hit /users?user_email=<email> (the API filters server-side by
+         exact email match -- O(1) on their end).
+      3. Match the id within the (usually 1-row) response and upsert.
+
+    If the user has no email on file (rare) we fall back to a full /users
+    sweep -- still fine for the ~2k-user scale, just slower.
+
+    Returns the raw payload on success, or None on failure / not-found.
+    """
+    db.init()
+    with db.connect() as conn:
+        local = conn.execute(
+            "SELECT email FROM users WHERE id = ?", (str(user_id),)
+        ).fetchone()
+    try:
+        if local and local["email"]:
+            rows = api.get_data_from_api("users", {"user_email": local["email"]}) or []
+        else:
+            rows = api.get_data_from_api("users") or []
+    except Exception as e:
+        logger.warning(f"enrich_user({user_id}) API call failed: {e}")
+        return None
+
+    match = next((u for u in rows if str(u.get("id")) == str(user_id)), None)
+    if not match:
+        return None
+    with db.connect() as conn:
+        conn.execute("BEGIN")
+        db.upsert_user(conn, match, enriched=True)
+        conn.execute("COMMIT")
+    return match
+
+
 def sync_needs(api) -> int:
     """Pull all active /needs and upsert. The /responses payload doesn't
     include addresses -- only the full need record does. We run this on
@@ -157,7 +199,18 @@ def mark_no_shows(conn) -> int:
 def current_status_for_signup(conn, response_id: str, user_id: str, shift_end: str | None) -> str:
     """Resolve the live status for one signup, with the no-show / signed-up
     distinction made from the shift end-time.
+
+    Manual overrides (from the web "Mark in" / "Mark out" buttons) win
+    over any /hours data we synced from Galaxy. This is the linchpin of
+    B2-prime: by sourcing the canonical status from manual_overrides
+    when present, the UI/calendar never flicker between 🟡 (kiosk) and
+    🟣 (manager-entered via /api/) when the same operator clicks the
+    button and we round-trip through Galaxy's /hours endpoint.
     """
+    ov = db.get_override(conn, response_id)
+    if ov:
+        return ov["status"]
+
     row = conn.execute(
         "SELECT classification FROM hours WHERE response_id = ? "
         "ORDER BY updated_at DESC LIMIT 1",
