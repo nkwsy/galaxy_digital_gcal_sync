@@ -46,18 +46,30 @@ SYNC_PID=$!
 python run_web.py        >"$LOG_WEB"  2>&1 &
 WEB_PID=$!
 
+# Live-tail both logs prefixed by source, so you can watch the dance.
+( tail -F "$LOG_SYNC" | sed 's/^/[sync] /' ) &
+TAIL_SYNC_PID=$!
+( tail -F "$LOG_WEB"  | sed 's/^/[web]  /' ) &
+TAIL_WEB_PID=$!
+
 cleanup() {
+  # Idempotent: trap fires for both INT and EXIT; bail on the second.
+  [ -n "${_CLEANUP_DONE:-}" ] && return
+  _CLEANUP_DONE=1
   echo
-  echo ">> stopping (sync=$SYNC_PID web=$WEB_PID)"
+  echo ">> stopping (sync=$SYNC_PID web=$WEB_PID tails=$TAIL_SYNC_PID,$TAIL_WEB_PID)"
+  # Kill the tails first so `wait` below doesn't hang on them
+  # (tail -F never exits on its own).
+  kill "$TAIL_SYNC_PID" "$TAIL_WEB_PID" 2>/dev/null
   kill "$SYNC_PID" "$WEB_PID" 2>/dev/null
-  wait 2>/dev/null
+  # Give them a moment to clean up; then SIGKILL anything still alive.
+  sleep 1
+  kill -9 "$SYNC_PID" "$WEB_PID" "$TAIL_SYNC_PID" "$TAIL_WEB_PID" 2>/dev/null
   echo ">> done."
 }
 trap cleanup EXIT INT TERM
 
-# Live-tail both logs prefixed by source, so you can watch the dance.
-( tail -F "$LOG_SYNC" | sed 's/^/[sync] /' ) &
-( tail -F "$LOG_WEB"  | sed 's/^/[web]  /' ) &
-
-# Block on the sync loop -- if it exits we shut everything down.
+# Block on the sync loop -- if it exits we shut everything down. Wait
+# only on the specific PID, NOT bare `wait`, otherwise we also wait for
+# the tail -F children which never terminate on their own.
 wait "$SYNC_PID"
