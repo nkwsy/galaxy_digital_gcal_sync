@@ -43,6 +43,15 @@ app = FastAPI(title="Galaxy Digital live status")
 security = HTTPBasic(auto_error=False)
 
 
+@app.on_event("startup")
+def _ensure_schema() -> None:
+    """Create the SQLite schema on first launch so the viewer doesn't 500
+    when the operator hits / before run_cal_update.py has done its first
+    ingest. The tables will be empty until then -- but empty is renderable.
+    """
+    db.init()
+
+
 def _require_auth(creds: Annotated[HTTPBasicCredentials | None, Depends(security)]):
     if not WEB_PASSWORD:
         # Refuse to serve anything if the operator hasn't set a password --
