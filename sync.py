@@ -24,6 +24,48 @@ CHICAGO = pytz.timezone("America/Chicago")
 WATCH_WINDOW_H = 20  # how far around now to compute live statuses
 
 
+def enrich_user(api, user_id: str) -> dict | None:
+    """Pull the full /users record for one user and persist it locally.
+
+    The /responses payload only carries id/fname/lname/email per user, so
+    the phone / address / status columns stay NULL after a vanilla refresh.
+    Called by web.py the first time an operator views /user/{id}.
+
+    Strategy:
+      1. Look up the user's email in local SQLite.
+      2. Hit /users?user_email=<email> (the API filters server-side by
+         exact email match -- O(1) on their end).
+      3. Match the id within the (usually 1-row) response and upsert.
+
+    If the user has no email on file (rare) we fall back to a full /users
+    sweep -- still fine for the ~2k-user scale, just slower.
+
+    Returns the raw payload on success, or None on failure / not-found.
+    """
+    db.init()
+    with db.connect() as conn:
+        local = conn.execute(
+            "SELECT email FROM users WHERE id = ?", (str(user_id),)
+        ).fetchone()
+    try:
+        if local and local["email"]:
+            rows = api.get_data_from_api("users", {"user_email": local["email"]}) or []
+        else:
+            rows = api.get_data_from_api("users") or []
+    except Exception as e:
+        logger.warning(f"enrich_user({user_id}) API call failed: {e}")
+        return None
+
+    match = next((u for u in rows if str(u.get("id")) == str(user_id)), None)
+    if not match:
+        return None
+    with db.connect() as conn:
+        conn.execute("BEGIN")
+        db.upsert_user(conn, match, enriched=True)
+        conn.execute("COMMIT")
+    return match
+
+
 def sync_needs(api) -> int:
     """Pull all active /needs and upsert. The /responses payload doesn't
     include addresses -- only the full need record does. We run this on

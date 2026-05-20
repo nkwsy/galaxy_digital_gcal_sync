@@ -164,6 +164,7 @@ def _layout(title: str, body: str, live: bool = False,
 <nav>
   <a href="/">Today</a>
   <a href="/calendar">Calendar</a>
+  <a href="/users">Find volunteer</a>
   <a href="/offenders">Repeat no-shows</a>
   <a href="/digest">Digest</a>
 </nav>
@@ -341,13 +342,17 @@ def shift_detail(shift_id: str,
                  f'{s["start_ts"]} → {s["end_ts"]} · slots={s["slots"]}</div>')
     parts.append('<table><thead><tr><th></th><th>Volunteer</th><th>Email</th>'
                  '<th>Status</th><th>In</th><th>Out</th><th>Action</th></tr></thead><tbody>')
-    # Build a {name -> response_id} lookup so we can attach action buttons.
-    # signups_for_shift is already in DB-sort order.
-    rid_lookup = {f"{r['fname']} {r['lname']}".strip(): r['response_id']
-                  for r in sgs}
+    # Build {name -> (response_id, user_id)} so we can attach buttons +
+    # link names through to the user-detail page. signups_for_shift
+    # is already in DB-sort order.
+    name_lookup = {f"{r['fname']} {r['lname']}".strip(): (r['response_id'], r['user_id'])
+                   for r in sgs}
     for p in people:
-        rid = rid_lookup.get(p['name'], '')
-        parts.append(f"<tr><td>{p['emoji']}</td><td>{p['name']}</td><td>{p['email']}</td>"
+        rid, uid = name_lookup.get(p['name'], ('', ''))
+        name_html = (f'<a href="/user/{uid}">{p["name"]}</a>' if uid
+                     else p['name'])
+        parts.append(f"<tr><td>{p['emoji']}</td><td>{name_html}</td>"
+                     f"<td>{p['email']}</td>"
                      f"<td>{p['status']}</td><td>{p['check_in'] or ''}</td>"
                      f"<td>{p['check_out'] or ''}</td>"
                      f"<td>{_render_action_buttons(rid, p['status'], shift_id)}</td></tr>")
@@ -583,6 +588,56 @@ def action_clear(
     return RedirectResponse(f"/shift/{shift_id}", status_code=303)
 
 
+@app.get("/users", response_class=HTMLResponse)
+def users_search(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+                 q: str = ""):
+    """Simple name/email search over local users.
+
+    The result table links each row through to /user/{id}. No /users API
+    call -- this is purely a lookup over what we've already synced. New
+    volunteers show up after the next sync_responses cycle (max 2h).
+    """
+    q = (q or "").strip()
+    parts = ['<h2>Find a volunteer</h2>']
+    parts.append(
+        '<form method="get" action="/users" style="margin-bottom:1em">'
+        f'<input type="text" name="q" value="{q}" placeholder="name or email" '
+        'autofocus style="padding:6px;width:60%"> '
+        '<button type="submit">Search</button>'
+        '</form>'
+    )
+    if not q:
+        return HTMLResponse(_layout("Find volunteer", "\n".join(parts)))
+
+    needle = f"%{q}%"
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT u.id, u.fname, u.lname, u.email,
+                      (SELECT COUNT(*) FROM signups sg WHERE sg.user_id=u.id) AS n
+               FROM users u
+               WHERE u.fname LIKE ? OR u.lname LIKE ? OR u.email LIKE ?
+                  OR (u.fname || ' ' || u.lname) LIKE ?
+               ORDER BY u.lname, u.fname
+               LIMIT 50
+            """,
+            (needle, needle, needle, needle),
+        ).fetchall()
+    if not rows:
+        parts.append(f"<p class='empty'>No volunteers matching <b>{q}</b>.</p>")
+    else:
+        parts.append(f"<p class='meta'>{len(rows)} result(s)</p>")
+        parts.append('<table><thead><tr><th>Volunteer</th><th>Email</th>'
+                     '<th>Signups</th></tr></thead><tbody>')
+        for r in rows:
+            full = f"{(r['fname'] or '')} {(r['lname'] or '')}".strip() or r['email']
+            parts.append(
+                f"<tr><td><a href=\"/user/{r['id']}\">{full}</a></td>"
+                f"<td>{r['email'] or ''}</td><td>{r['n']}</td></tr>"
+            )
+        parts.append('</tbody></table>')
+    return HTMLResponse(_layout("Find volunteer", "\n".join(parts)))
+
+
 @app.get("/offenders", response_class=HTMLResponse)
 def offenders(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
               days: int = 30, min_count: int = 2):
@@ -599,8 +654,9 @@ def offenders(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
         parts.append('<table><thead><tr><th>Volunteer</th><th>Email</th><th>No-shows</th>'
                      '</tr></thead><tbody>')
         for r in rows:
+            full = f"{(r['fname'] or '')} {(r['lname'] or '')}".strip()
             parts.append(
-                f"<tr><td>{(r['fname'] or '')} {(r['lname'] or '')}</td>"
+                f"<tr><td><a href=\"/user/{r['id']}\">{full}</a></td>"
                 f"<td>{r['email'] or ''}</td><td>{r['no_shows']}</td></tr>"
             )
         parts.append('</tbody></table>')
@@ -612,6 +668,142 @@ def view_digest(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)], days
     data = digest_mod.collect(days_back=days)
     html = digest_mod.render_html(data)
     return HTMLResponse(_layout("Digest preview", html, live=False))
+
+
+@app.get("/user/{user_id}", response_class=HTMLResponse)
+def user_detail(user_id: str,
+                _: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+                refresh: int = 0):
+    """Profile + history for one volunteer.
+
+    Pulls all signups (past + future) joined with their resolved status,
+    aggregates attendance stats, and shows contact info. If the user has
+    no `last_enriched` timestamp (we never pulled their full /users record),
+    fires a one-shot sync.enrich_user before rendering -- the page then
+    cache hits forever until the operator clicks "Refresh from Galaxy".
+    """
+    db.init()
+    # On-demand enrichment (lazy / explicit refresh).
+    needs_enrich = False
+    with db.connect() as conn:
+        u = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not u:
+            raise HTTPException(404, f"unknown user_id {user_id!r}")
+        needs_enrich = refresh == 1 or not u["last_enriched"]
+    if needs_enrich:
+        try:
+            import sync as sync_mod
+            api = _get_galaxy_api()
+            sync_mod.enrich_user(api, user_id)
+        except Exception:
+            # Non-fatal -- render with whatever we have.
+            pass
+        with db.connect() as conn:
+            u = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT sg.id AS rid, s.id AS sid, s.start_ts, s.end_ts,
+                      n.title, n.location, sg.response_status,
+                      h.classification, h.source, h.date_start, h.date_end
+               FROM signups sg
+               JOIN shifts s ON s.id = sg.shift_id
+               LEFT JOIN needs n ON n.id = sg.need_id
+               LEFT JOIN hours h ON h.response_id = sg.id
+               WHERE sg.user_id = ?
+               ORDER BY s.start_ts DESC
+            """,
+            (user_id,),
+        ).fetchall()
+        # Resolve live status per row through current_status_for_signup so
+        # manual overrides are reflected and past shifts get NO_SHOW stamped.
+        import sync as sync_mod
+        signups = []
+        counts = {checkin.SIGNED_UP: 0, checkin.CHECKED_IN: 0,
+                  checkin.CHECKED_OUT: 0, checkin.MANAGER_ENTERED: 0,
+                  checkin.NO_SHOW: 0}
+        for r in rows:
+            status = sync_mod.current_status_for_signup(
+                conn, r["rid"], user_id, r["end_ts"]
+            )
+            counts[status] = counts.get(status, 0) + 1
+            signups.append({
+                "rid": r["rid"], "sid": r["sid"],
+                "start": r["start_ts"], "end": r["end_ts"],
+                "title": r["title"] or "(no title)",
+                "location": r["location"] or "",
+                "status": status, "emoji": checkin.STATUS_EMOJI.get(status, "🔘"),
+                "response_status": r["response_status"],
+                "check_in": (r["date_start"] or "") if "/kiosk/storecheckin/" in (r["source"] or "").lower() else "",
+                "check_out": (r["date_end"] or "") if "/kiosk/storecheckout/" in (r["source"] or "").lower() else "",
+            })
+
+    # Split into upcoming vs past for readability.
+    now_ct = datetime.now(CHICAGO).strftime("%Y-%m-%d %H:%M:%S")
+    upcoming = [s for s in signups if (s["start"] or "") >= now_ct]
+    past = [s for s in signups if (s["start"] or "") < now_ct]
+    total = sum(counts.values())
+    attended = counts.get(checkin.CHECKED_OUT, 0) + counts.get(checkin.MANAGER_ENTERED, 0)
+    attendance_pct = round(100 * attended / total) if total else 0
+
+    name = f"{u['fname'] or ''} {u['lname'] or ''}".strip() or f"user {user_id}"
+    parts = [f'<h2>{name}</h2>']
+    parts.append('<div class="meta">')
+    if u["email"]:
+        parts.append(f'<a href="mailto:{u["email"]}">{u["email"]}</a> · ')
+    if u["phone"]:
+        parts.append(f'<a href="tel:{u["phone"]}">{u["phone"]}</a> · ')
+    if u["address"]:
+        addr_q = u["address"].replace(" ", "+")
+        parts.append(f'<a target="_blank" href="https://maps.google.com/?q={addr_q}">'
+                     f'{u["address"]}</a> · ')
+    if u["user_status"]:
+        parts.append(f'status: <b>{u["user_status"]}</b> · ')
+    parts.append(f'user id {user_id}')
+    if u["last_enriched"]:
+        parts.append(f' · last enriched {u["last_enriched"][:16]}Z · '
+                     f'<a href="/user/{user_id}?refresh=1">refresh from Galaxy</a>')
+    else:
+        parts.append(f' · <a href="/user/{user_id}?refresh=1">enrich from Galaxy</a>')
+    parts.append('</div>')
+
+    # Summary stats card
+    parts.append('<div class="summary">')
+    parts.append(f'<span>{total} signups · <b>{attendance_pct}%</b> attended</span>')
+    for k in (checkin.CHECKED_OUT, checkin.MANAGER_ENTERED, checkin.CHECKED_IN,
+              checkin.SIGNED_UP, checkin.NO_SHOW):
+        n = counts.get(k, 0)
+        if n:
+            parts.append(f"<span>{checkin.STATUS_EMOJI[k]} {n} {k.replace('_',' ')}</span>")
+    parts.append('</div>')
+
+    def _table(label: str, rows_):
+        if not rows_:
+            return ""
+        out = [f'<h3>{label} ({len(rows_)})</h3>']
+        out.append('<table><thead><tr><th></th><th>When</th><th>Need</th>'
+                   '<th>Status</th><th>In</th><th>Out</th></tr></thead><tbody>')
+        for s in rows_:
+            tr_cls = ""
+            if s["status"] == checkin.NO_SHOW: tr_cls = " class='no-show'"
+            elif s["status"] == checkin.CHECKED_IN: tr_cls = " class='checked-in'"
+            elif s["status"] == checkin.CHECKED_OUT: tr_cls = " class='checked-out'"
+            out.append(
+                f"<tr{tr_cls}><td>{s['emoji']}</td>"
+                f"<td>{(s['start'] or '')[:16]}</td>"
+                f"<td><a href=\"/shift/{s['sid']}\">{s['title']}</a></td>"
+                f"<td>{s['status']}</td>"
+                f"<td>{(s['check_in'])[11:16] if s['check_in'] else ''}</td>"
+                f"<td>{(s['check_out'])[11:16] if s['check_out'] else ''}</td></tr>"
+            )
+        out.append('</tbody></table>')
+        return "\n".join(out)
+
+    parts.append(_table("Upcoming", upcoming))
+    parts.append(_table("Past", past))
+    return HTMLResponse(_layout(name, "\n".join(parts), live=False))
 
 
 @app.get("/calendar", response_class=HTMLResponse)
