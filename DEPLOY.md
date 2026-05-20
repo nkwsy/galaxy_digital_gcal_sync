@@ -4,6 +4,38 @@ End-to-end procedure to get the sync loop and live web viewer auto-starting
 on boot. Tested on Debian/Ubuntu with systemd; should work on any modern
 systemd distro.
 
+## Prerequisites
+
+- **Python 3.11+** (3.10 might work but isn't tested; 3.9 will crash --
+  the codebase uses PEP 604 `X | None` unions). `bootstrap.sh` checks
+  this and aborts with an upgrade recipe if too old.
+- **systemd** for the auto-start units. If your box is something else
+  you can still run `run_cal_update.py` + `run_web.py` under any
+  supervisor (e.g. `supervisord`, `runit`, a `screen` session).
+- **Google Calendar OAuth credentials** (`credentials.json`) and a
+  cached `token.json` (created on first OAuth flow).
+
+### Bringing a Debian 11 box up to Python 3.11 via pyenv
+
+The OS default on bullseye is 3.9. Easiest non-invasive upgrade:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
+    libreadline-dev libsqlite3-dev libffi-dev liblzma-dev curl git
+
+curl https://pyenv.run | bash
+# Add the three lines pyenv-installer prints to ~/.bashrc, then:
+exec bash
+
+pyenv install 3.11.9
+cd ~/galaxy_digital_gcal_sync
+pyenv local 3.11.9        # writes .python-version, scoped to this dir
+```
+
+After this `python --version` inside the repo reports 3.11.9, and
+`./bootstrap.sh` will use it automatically.
+
 ## 1. Get the code onto the box
 
 ```bash
