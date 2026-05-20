@@ -1,3 +1,5 @@
+from __future__ import annotations  # so `str | None` works on Python 3.9
+
 import get_connected as gc
 import gcal
 import importlib
