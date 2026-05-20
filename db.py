@@ -106,6 +106,19 @@ CREATE TABLE IF NOT EXISTS scan_state (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS manual_overrides (
+    -- Buttons in web.py write here. The classifier reads this table FIRST
+    -- and only falls through to hour_source parsing when nothing's set.
+    -- This makes the manual web UI immune to the "Galaxy POST roundtrips
+    -- as /api/createHour and gets classified as manager_entered" flicker.
+    response_id      TEXT PRIMARY KEY,
+    status           TEXT NOT NULL,                -- checked_in | checked_out
+    set_at           TEXT NOT NULL,                -- UTC ISO
+    galaxy_hour_id   TEXT,                          -- nullable; filled after Galaxy POST returns
+    galaxy_post_ok   INTEGER NOT NULL DEFAULT 0,    -- 0/1 -- did the Galaxy write succeed?
+    galaxy_last_err  TEXT
+);
 """
 
 
@@ -351,6 +364,49 @@ def record_status(conn: sqlite3.Connection, response_id: str, shift_id: str | No
         "VALUES(?,?,?,?,?)",
         (response_id, shift_id, user_id, status, datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")),
     )
+
+
+# ---------- manual_overrides ----------------------------------------------
+
+def get_override(conn: sqlite3.Connection, response_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT status, set_at, galaxy_hour_id, galaxy_post_ok, galaxy_last_err "
+        "FROM manual_overrides WHERE response_id = ?",
+        (response_id,),
+    ).fetchone()
+
+
+def set_override(conn: sqlite3.Connection, response_id: str, status: str,
+                 galaxy_hour_id: str | None = None,
+                 galaxy_post_ok: bool = False,
+                 galaxy_last_err: str | None = None) -> None:
+    conn.execute(
+        """INSERT INTO manual_overrides(response_id,status,set_at,galaxy_hour_id,
+                                         galaxy_post_ok,galaxy_last_err)
+           VALUES(?,?,?,?,?,?)
+           ON CONFLICT(response_id) DO UPDATE SET
+             status=excluded.status,
+             set_at=excluded.set_at,
+             galaxy_hour_id=COALESCE(excluded.galaxy_hour_id, manual_overrides.galaxy_hour_id),
+             galaxy_post_ok=excluded.galaxy_post_ok,
+             galaxy_last_err=excluded.galaxy_last_err
+        """,
+        (
+            response_id, status,
+            datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
+            galaxy_hour_id, 1 if galaxy_post_ok else 0, galaxy_last_err,
+        ),
+    )
+
+
+def clear_override(conn: sqlite3.Connection, response_id: str) -> sqlite3.Row | None:
+    """Pop the override row (returns it if it existed). Caller uses the
+    returned galaxy_hour_id to DELETE the Galaxy-side hour if any.
+    """
+    row = get_override(conn, response_id)
+    conn.execute("DELETE FROM manual_overrides WHERE response_id = ?",
+                 (response_id,))
+    return row
 
 
 # ---------- query helpers --------------------------------------------------

@@ -144,20 +144,26 @@ SSE_CLIENT_JS = """
 """
 
 
-def _layout(title: str, body: str, live: bool = False) -> str:
+def _layout(title: str, body: str, live: bool = False,
+            wide: bool = False) -> str:
     """Wrap `body` in the site chrome. If `live` is true, embed the SSE
     client JS that swaps #shifts-container in place when /events fires.
+
+    `wide` disables the page's max-width so the /calendar iframe can use
+    the whole viewport instead of being squeezed into the 980px column.
     """
     live_script = SSE_CLIENT_JS if live else ""
     stamp = datetime.now(CHICAGO).strftime("%H:%M:%S")
+    body_style = "margin: 0; padding: 0.5em;" if wide else ""
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>{title}</title>
-<style>{PAGE_CSS}</style></head>
+<style>{PAGE_CSS}{'body { max-width: none !important; ' + body_style + ' }' if wide else ''}</style></head>
 <body>
 <header>
 <h1>Galaxy Digital · live</h1>
 <nav>
   <a href="/">Today</a>
+  <a href="/calendar">Calendar</a>
   <a href="/offenders">Repeat no-shows</a>
   <a href="/digest">Digest</a>
 </nav>
@@ -374,85 +380,144 @@ def _now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _write_manual_status(response_id: str, action: str) -> str:
-    """Apply a manual check-in/check-out/clear to local SQLite.
+_galaxy_api = None  # cached singleton for web action POSTs
 
-    Returns the resulting status string for logging / UX.
-    Raises HTTPException(404) if response_id is unknown.
+
+def _get_galaxy_api():
+    """Lazily instantiate (and login) a GalaxyAPI for the web process.
+
+    The sync loop has its own client. We avoid sharing because:
+      1. Both processes log in with the same creds -- two sessions are fine.
+      2. The web process doesn't always need the API; only when an operator
+         clicks an action button.
+      3. Lazy import dodges the global-import side-effect of get_connected
+         (which would otherwise fire on every uvicorn boot, even if no one
+         ever clicks an action).
+    """
+    global _galaxy_api
+    if _galaxy_api is None:
+        import get_connected as gc  # local import; defers loguru side effects
+        _galaxy_api = gc.GalaxyAPI()
+    return _galaxy_api
+
+
+def _push_to_galaxy(action: str, response_id: str, shift_meta: dict,
+                    existing_galaxy_hour_id: str | None) -> tuple[str | None, bool, str | None]:
+    """Best-effort: replicate the manual action to Galaxy Digital.
+
+    Returns (galaxy_hour_id, ok, error_str). Failures are NEVER raised --
+    the local override is the source of truth, so a Galaxy outage must
+    not block the UI button.
+
+    Only fires when WEB_CHECKIN_POSTS_TO_GALAXY=yes (default off).
+    """
+    if os.getenv("WEB_CHECKIN_POSTS_TO_GALAXY", "no").lower() not in ("yes", "1", "true"):
+        return existing_galaxy_hour_id, False, None
+    try:
+        api = _get_galaxy_api()
+    except Exception as e:
+        return existing_galaxy_hour_id, False, f"login: {e}"
+
+    now = datetime.now()
+    duration_h = (shift_meta["duration_min"] or 0) / 60.0 or 1.0
+    try:
+        if action == "checkin":
+            api.post_hours(response_id, hour_start=now,
+                           hour_hours=duration_h, hour_status="pending")
+            # Galaxy's 201 doesn't include the id; we fish it out via the
+            # next GET. Best-effort -- a missing id is non-fatal.
+            return None, True, None
+
+        if action == "checkout":
+            if not existing_galaxy_hour_id:
+                # No previous Galaxy hour to update -- fall back to a fresh
+                # POST representing the whole shift as completed.
+                api.post_hours(response_id, hour_start=now,
+                               hour_hours=duration_h, hour_status="entered")
+                return None, True, None
+            # Compute elapsed time from when we marked them in. If we don't
+            # know, just record the full shift duration.
+            api.update_hours(existing_galaxy_hour_id,
+                             hour_hours=duration_h, hour_status="entered")
+            return existing_galaxy_hour_id, True, None
+
+        if action == "clear":
+            if existing_galaxy_hour_id:
+                api.delete_hours(existing_galaxy_hour_id)
+            return None, True, None
+
+    except Exception as e:
+        return existing_galaxy_hour_id, False, str(e)[:240]
+    return existing_galaxy_hour_id, False, "unknown action"
+
+
+def _write_manual_status(response_id: str, action: str) -> str:
+    """Apply a manual check-in/check-out/clear.
+
+    Local-first: writes the override row, then best-effort POSTs to
+    Galaxy Digital. The override row drives the UI / calendar /
+    digest; the Galaxy write only affects reports inside their admin
+    panel.
+
+    Returns the resulting status string. Raises 404 for unknown rids.
     """
     db.init()
     with db.connect() as conn:
         sg = conn.execute(
-            "SELECT sg.user_id, sg.shift_id, sg.need_id "
-            "FROM signups sg WHERE sg.id = ?",
+            "SELECT sg.user_id, sg.shift_id, sg.need_id, s.duration_min "
+            "FROM signups sg "
+            "JOIN shifts s ON s.id = sg.shift_id "
+            "WHERE sg.id = ?",
             (response_id,),
         ).fetchone()
         if not sg:
             raise HTTPException(404, f"unknown response_id {response_id!r}")
 
-        # Synthesize the same hour_source strings simulate_checkin.py uses so
-        # checkin.classify_hour resolves them to CHECKED_IN / CHECKED_OUT.
+        prev_override = db.get_override(conn, response_id)
+        prev_galaxy_id = prev_override["galaxy_hour_id"] if prev_override else None
+        shift_meta = {"duration_min": sg["duration_min"]}
+
         if action == "clear":
+            # Wipe both the local override AND any Galaxy hour we created.
             conn.execute("BEGIN")
-            conn.execute(
-                "DELETE FROM hours WHERE response_id = ? AND id LIKE 'web-%'",
-                (response_id,),
-            )
+            db.clear_override(conn, response_id)
             conn.execute(
                 "DELETE FROM scan_state WHERE key = ?",
                 (f"gcal_fp:{sg['shift_id']}",),
             )
             conn.execute("COMMIT")
+            _push_to_galaxy("clear", response_id, shift_meta, prev_galaxy_id)
             return checkin.SIGNED_UP
 
         if action == "checkin":
-            source = "Added at: /kiosk/storeCheckin/ by web ui"
             status = checkin.CHECKED_IN
         elif action == "checkout":
-            source = ("Added at: /kiosk/storeCheckin/ by web ui "
-                      "Updated at: /kiosk/storeCheckout/ by web ui")
             status = checkin.CHECKED_OUT
         else:
             raise HTTPException(400, f"unknown action {action!r}")
 
-        existing = conn.execute(
-            "SELECT id FROM hours WHERE response_id = ? AND id LIKE 'web-%' LIMIT 1",
-            (response_id,),
-        ).fetchone()
-        now = _now_iso()
+        # 1. Local override (always succeeds).
         conn.execute("BEGIN")
-        if existing:
-            conn.execute(
-                "UPDATE hours SET source=?, classification=?, updated_at=? "
-                "WHERE id=?",
-                (source, status, now, existing["id"]),
-            )
-        else:
-            hid = f"web-{uuid.uuid4().hex[:10]}"
-            db.ingest_hour(conn, {
-                "id": hid,
-                "hour_response_id": response_id,
-                "user": {"id": sg["user_id"]},
-                "need": {"id": sg["need_id"]},
-                "hour_source": source,
-                "hour_status": "approved",
-                "hour_date_start": now,
-                "hour_date_end": now,
-                "created_at": now,
-                "updated_at": now,
-            })
-        # Append to status_history (idempotent) so /offenders + digest see it.
-        db.record_status(
-            conn, response_id=response_id, shift_id=sg["shift_id"],
-            user_id=sg["user_id"], status=status,
-        )
-        # Invalidate the per-shift gcal fingerprint so the next scan tick
-        # pushes the update instead of skipping it as unchanged.
+        db.set_override(conn, response_id, status,
+                        galaxy_hour_id=prev_galaxy_id,
+                        galaxy_post_ok=False)
+        db.record_status(conn, response_id=response_id,
+                         shift_id=sg["shift_id"], user_id=sg["user_id"],
+                         status=status)
         conn.execute(
             "DELETE FROM scan_state WHERE key = ?",
             (f"gcal_fp:{sg['shift_id']}",),
         )
         conn.execute("COMMIT")
+
+        # 2. Best-effort Galaxy POST (no-op if WEB_CHECKIN_POSTS_TO_GALAXY=no).
+        galaxy_id, ok, err = _push_to_galaxy(action, response_id, shift_meta, prev_galaxy_id)
+        if ok or err:
+            with db.connect() as conn:
+                db.set_override(conn, response_id, status,
+                                galaxy_hour_id=galaxy_id,
+                                galaxy_post_ok=ok,
+                                galaxy_last_err=err)
         return status
 
 
@@ -547,6 +612,50 @@ def view_digest(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)], days
     data = digest_mod.collect(days_back=days)
     html = digest_mod.render_html(data)
     return HTMLResponse(_layout("Digest preview", html, live=False))
+
+
+@app.get("/calendar", response_class=HTMLResponse)
+def view_calendar(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
+    """Embed the Google Calendar so the same page can be the operator's
+    single source of truth: live status above, calendar grid below.
+
+    Reads CALENDAR_ID from env (falls back to GCAL_TEST_CALENDAR_ID for
+    soak-testing setups). If the calendar is private, the iframe will
+    show a "permission denied" message inside itself -- that's a
+    Google-side concern, fix is to make the calendar public-readable
+    OR share with the operator's google account.
+    """
+    import urllib.parse
+    cal_id = (os.getenv("GCAL_TEST_CALENDAR_ID") or os.getenv("CALENDAR_ID") or "").strip()
+    if not cal_id:
+        body = ("<p class='empty'>No CALENDAR_ID configured in .env -- "
+                "nothing to embed.</p>")
+        return HTMLResponse(_layout("Calendar", body))
+    # Google Calendar's public-embed URL. ctz= sets the displayed timezone.
+    src = (
+        "https://calendar.google.com/calendar/embed?"
+        + urllib.parse.urlencode({
+            "src": cal_id,
+            "ctz": "America/Chicago",
+            "mode": "WEEK",
+            "showTitle": "0",
+            "showPrint": "0",
+            "showCalendars": "0",
+            "showTz": "0",
+        })
+    )
+    body = (
+        f'<iframe src="{src}" '
+        f'style="border:0;width:100%;height:calc(100vh - 130px);" '
+        f'frameborder="0" scrolling="no"></iframe>'
+        '<p class="meta" style="font-size:0.85em">'
+        'If you see a blank or permission-denied frame: '
+        "the calendar must be shared with you or made public for the embed "
+        "to load. Open it in a new tab to confirm: "
+        f'<a href="https://calendar.google.com" target="_blank">calendar.google.com</a>'
+        '</p>'
+    )
+    return HTMLResponse(_layout("Calendar", body, wide=True))
 
 
 @app.get("/api/today.json")

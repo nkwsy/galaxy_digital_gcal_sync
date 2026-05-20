@@ -157,7 +157,18 @@ def mark_no_shows(conn) -> int:
 def current_status_for_signup(conn, response_id: str, user_id: str, shift_end: str | None) -> str:
     """Resolve the live status for one signup, with the no-show / signed-up
     distinction made from the shift end-time.
+
+    Manual overrides (from the web "Mark in" / "Mark out" buttons) win
+    over any /hours data we synced from Galaxy. This is the linchpin of
+    B2-prime: by sourcing the canonical status from manual_overrides
+    when present, the UI/calendar never flicker between 🟡 (kiosk) and
+    🟣 (manager-entered via /api/) when the same operator clicks the
+    button and we round-trip through Galaxy's /hours endpoint.
     """
+    ov = db.get_override(conn, response_id)
+    if ov:
+        return ov["status"]
+
     row = conn.execute(
         "SELECT classification FROM hours WHERE response_id = ? "
         "ORDER BY updated_at DESC LIMIT 1",

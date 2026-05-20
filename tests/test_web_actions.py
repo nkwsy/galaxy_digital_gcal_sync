@@ -45,7 +45,7 @@ def _seed(conn):
     db.set_state(conn, "gcal_fp:s_x", "stale_fingerprint")
 
 
-def test_action_checkin_writes_local_hour(client):
+def test_action_checkin_writes_override(client):
     c, web_mod = client
     import db, checkin
     with db.connect() as conn:
@@ -59,12 +59,11 @@ def test_action_checkin_writes_local_hour(client):
     assert r.headers["location"] == "/shift/s_x"
 
     with db.connect() as conn:
-        h = conn.execute("SELECT classification, source FROM hours "
-                         "WHERE response_id='r_a'").fetchone()
-        assert h is not None, "no hour row created"
-        assert h["classification"] == checkin.CHECKED_IN
-        assert "/kiosk/storeCheckin/" in h["source"]
-        assert "/kiosk/storeCheckout/" not in h["source"]
+        ov = db.get_override(conn, "r_a")
+        assert ov is not None, "no override row created"
+        assert ov["status"] == checkin.CHECKED_IN
+        # Galaxy POST is off by default, so post_ok stays 0 and err is None.
+        assert ov["galaxy_post_ok"] == 0
 
         hist = conn.execute("SELECT status FROM status_history "
                             "WHERE response_id='r_a'").fetchall()
@@ -86,19 +85,52 @@ def test_action_checkout_then_clear(client):
            auth=("volunteer", "testpw"), follow_redirects=False)
 
     with db.connect() as conn:
-        h = conn.execute("SELECT classification, source FROM hours "
-                         "WHERE response_id='r_a'").fetchone()
-        assert h["classification"] == checkin.CHECKED_OUT
-        assert "/kiosk/storeCheckout/" in h["source"]
+        ov = db.get_override(conn, "r_a")
+        assert ov is not None
+        assert ov["status"] == checkin.CHECKED_OUT
 
-    # clear -> hour row gone, fingerprint invalidated again
     c.post("/action/clear", data={"response_id": "r_a", "shift_id": "s_x"},
            auth=("volunteer", "testpw"), follow_redirects=False)
 
     with db.connect() as conn:
-        h = conn.execute("SELECT id FROM hours "
-                         "WHERE response_id='r_a' AND id LIKE 'web-%'").fetchone()
-        assert h is None, "clear should delete the web-* hours row"
+        assert db.get_override(conn, "r_a") is None, \
+            "clear should drop the override row"
+
+
+def test_override_wins_over_hours_classification(client):
+    """Even if a synced /hours row says manager_entered (🟣), the override
+    from the web button keeps the displayed status at checked_in (🟡).
+    """
+    c, _ = client
+    import db, checkin, sync
+    with db.connect() as conn:
+        _seed(conn)
+        # Inject a Galaxy-side hour that classifies as MANAGER_ENTERED.
+        db.ingest_hour(conn, {
+            "id": "h_remote",
+            "hour_response_id": "r_a",
+            "user": {"id": "u_a"},
+            "need": {"id": "n"},
+            "hour_source": "Added at: /api/createHour by user 6063654",
+            "hour_status": "approved",
+            "hour_date_start": "2026-05-19 10:00:00",
+            "hour_date_end":   "2026-05-19 12:00:00",
+            "created_at": "2026-05-19 10:00:00",
+            "updated_at": "2026-05-19 10:05:00",
+        })
+
+    # No override yet -> falls through to the hours classification.
+    with db.connect() as conn:
+        status = sync.current_status_for_signup(conn, "r_a", "u_a", "2026-05-19 12:00:00")
+    assert status == checkin.MANAGER_ENTERED
+
+    # Click "Mark in" -> override should win even though the hour row exists.
+    c.post("/action/checkin", data={"response_id": "r_a", "shift_id": "s_x"},
+           auth=("volunteer", "testpw"), follow_redirects=False)
+    with db.connect() as conn:
+        status = sync.current_status_for_signup(conn, "r_a", "u_a", "2026-05-19 12:00:00")
+    assert status == checkin.CHECKED_IN, \
+        "manual override must take priority over manager_entered classification"
 
 
 def test_action_unknown_response_id_404(client):
