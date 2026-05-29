@@ -110,6 +110,39 @@ CREATE TABLE IF NOT EXISTS scan_state (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS email_templates (
+    -- Operator-defined email bodies with {{var}} substitution.
+    -- auto_trigger != NULL means the background scanner will fire this
+    -- template at qualifying signups; NULL means manual-only.
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    subject       TEXT NOT NULL,
+    body          TEXT NOT NULL,                 -- HTML; plain-text auto-stripped
+    auto_trigger  TEXT,                          -- NULL | no_show_24h | reminder_24h_before | thanks_after_checkout
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_sends (
+    -- Append-only log of every send, used both for the user history view
+    -- AND for dedup so an auto-trigger only ever fires once per
+    -- (response_id, template_id).
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id   INTEGER,
+    response_id   TEXT,
+    user_id       TEXT,
+    to_email      TEXT NOT NULL,
+    subject       TEXT,
+    sent_at       TEXT NOT NULL,
+    success       INTEGER NOT NULL,
+    error         TEXT,
+    triggered_by  TEXT,                          -- 'manual' | 'auto:<trigger>'
+    FOREIGN KEY (template_id) REFERENCES email_templates(id)
+);
+CREATE INDEX IF NOT EXISTS idx_email_sends_dedup
+    ON email_sends(template_id, response_id, success);
+
 CREATE TABLE IF NOT EXISTS manual_overrides (
     -- Buttons in web.py write here. The classifier reads this table FIRST
     -- and only falls through to hour_source parsing when nothing's set.

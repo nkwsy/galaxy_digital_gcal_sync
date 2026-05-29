@@ -61,11 +61,26 @@ def _checkout_time(row) -> str | None:
     return None
 
 
-def collect(days_back: int = 1) -> dict:
-    """Gather data for the digest. Returns a render-ready dict."""
-    now = datetime.now(CHICAGO)
-    start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
-    end_ts = now.strftime("%Y-%m-%d %H:%M:%S")
+def collect(days_back: int = 1, end: datetime | None = None) -> dict:
+    """Gather data for the digest. Returns a render-ready dict.
+
+    `end` is the inclusive last day; default is "now". When set, the
+    window becomes [end - days_back .. end + 1 day) -- so you can
+    re-render historical digests for any past week.
+    """
+    # Always normalize end_marker to end-of-its-day. Otherwise a digest
+    # generated at, say, 8 AM excludes the rest of today's shifts -- which
+    # is the wrong story for "today's report".
+    if end is None:
+        now = datetime.now(CHICAGO)
+        end_marker = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    else:
+        end_marker = end.replace(hour=23, minute=59, second=59, microsecond=0)
+        now = end_marker
+    start = (end_marker - timedelta(days=days_back)).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    end_ts = end_marker.strftime("%Y-%m-%d %H:%M:%S")
     start_ts = start.strftime("%Y-%m-%d %H:%M:%S")
 
     repeat_window = int(os.getenv("DIGEST_REPEAT_WINDOW", "30"))

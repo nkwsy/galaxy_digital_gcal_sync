@@ -14,6 +14,7 @@ import json
 
 import db
 import digest as digest_mod
+import auto_emails
 
 load_dotenv()
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
@@ -123,6 +124,17 @@ def update_cal():
             next_in = gcc.get_next_shift()    # seconds until next start
             since_last = gcc.get_last_shift()  # seconds since last end
             hot = (next_in < SCAN_HOT_WINDOW_S) or (since_last < SCAN_HOT_WINDOW_S)
+
+            # Auto-trigger emails run once per outer tick (regardless of
+            # hot/idle). dedup keeps re-runs cheap.
+            if os.getenv("AUTO_EMAILS_ENABLED", "no").lower() in ("yes", "1", "true"):
+                try:
+                    with db.connect() as conn:
+                        summary = auto_emails.process(conn)
+                    if summary["sent"] or summary["errors"]:
+                        logger.info(f"auto-emails: {summary}")
+                except Exception as e:
+                    logger.error(f"auto-emails sweep failed: {e}")
 
             if hot:
                 changed = gcc.user_checkin_update()
