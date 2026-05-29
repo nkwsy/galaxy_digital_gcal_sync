@@ -22,18 +22,24 @@ import pytz
 CHICAGO = pytz.timezone("America/Chicago")
 
 # Status values surfaced to gcal / digest / webpage.
-SIGNED_UP = "signed_up"      # response exists, no hour row yet
-CHECKED_IN = "checked_in"    # at the kiosk, not checked out yet
-CHECKED_OUT = "checked_out"  # full kiosk flow completed
+SIGNED_UP = "signed_up"          # response exists, no hour row yet
+CHECKED_IN = "checked_in"        # at the kiosk, not checked out yet
+CHECKED_OUT = "checked_out"      # full kiosk flow completed
 MANAGER_ENTERED = "manager_entered"  # hours added by a manager; treat as completed
-NO_SHOW = "no_show"          # response exists, no hour, shift end past
+NO_SHOW = "no_show"              # signup active, no hour, shift end past
+CANCELLED = "cancelled"          # volunteer un-registered before the shift
+
+# Statuses that should NOT count toward "X / N filled" -- a cancellation
+# frees up the slot, a manual no-show does not.
+FILLED_STATUSES = (CHECKED_IN, CHECKED_OUT, MANAGER_ENTERED, SIGNED_UP, NO_SHOW)
 
 STATUS_EMOJI = {
-    SIGNED_UP: "🔘",
-    CHECKED_IN: "🟡",    # at the kiosk, not yet checked out
-    CHECKED_OUT: "🟢",   # full kiosk flow complete
+    SIGNED_UP:       "🔘",
+    CHECKED_IN:      "🟡",    # at the kiosk, not yet checked out
+    CHECKED_OUT:     "🟢",    # full kiosk flow complete
     MANAGER_ENTERED: "🟣",
-    NO_SHOW: "🔴",
+    NO_SHOW:         "🔴",
+    CANCELLED:       "⚪",    # registered, then un-registered; doesn't count as no-show
 }
 
 

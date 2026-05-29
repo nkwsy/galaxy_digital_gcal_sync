@@ -113,6 +113,8 @@ th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #f0f0f0; f
 tr.no-show { background: #fff4f4; }
 tr.checked-in { background: #fffbe6; }   /* 🟡 at the kiosk now */
 tr.checked-out { background: #f1faf2; }  /* 🟢 done for the day */
+tr.cancelled { color: #999; background: #f5f5f5; }    /* ⚪ un-registered */
+tr.cancelled td { text-decoration: line-through; }
 .empty { color: #888; font-style: italic; }
 """
 
@@ -175,12 +177,30 @@ def _layout(title: str, body: str, live: bool = False,
 </body></html>"""
 
 
-def _row_for_signup(sg, shift_end_ts: str | None) -> dict:
-    """Resolve display row for one (signup + maybe-hour) pair."""
-    status = sg["classification"]
-    if not status:
-        now_ct = datetime.now(CHICAGO).strftime("%Y-%m-%d %H:%M:%S")
-        status = checkin.NO_SHOW if shift_end_ts and shift_end_ts < now_ct else checkin.SIGNED_UP
+def _row_for_signup(sg, shift_end_ts: str | None, conn=None) -> dict:
+    """Resolve display row for one (signup + maybe-hour) pair.
+
+    When `conn` is provided we route status resolution through
+    sync.current_status_for_signup so manual overrides + cancellations
+    are honored. Falling back to classification-only when no conn is
+    handed in keeps the digest's offline rendering simple.
+    """
+    if conn is not None:
+        import sync as sync_mod
+        status = sync_mod.current_status_for_signup(
+            conn, sg["response_id"], sg["user_id"], shift_end_ts,
+        )
+    else:
+        status = sg["classification"]
+        if not status:
+            # response_status reflects cancellations even without a conn.
+            if (sg["response_status"] if "response_status" in sg.keys() else None) \
+                    and sg["response_status"] != "active":
+                status = checkin.CANCELLED
+            else:
+                now_ct = datetime.now(CHICAGO).strftime("%Y-%m-%d %H:%M:%S")
+                status = (checkin.NO_SHOW if shift_end_ts and shift_end_ts < now_ct
+                          else checkin.SIGNED_UP)
     src = (sg["source"] or "") if "source" in sg.keys() else ""
     return {
         "user_id": sg["user_id"],
@@ -205,7 +225,7 @@ def _render_today_body(conn) -> tuple[str, str]:
     fp_inputs: list[str] = []
     for s in shifts:
         sgs = db.signups_for_shift(conn, s["id"])
-        people = [_row_for_signup(r, s["end_ts"]) for r in sgs]
+        people = [_row_for_signup(r, s["end_ts"], conn=conn) for r in sgs]
         counts: dict[str, int] = {}
         for p in people:
             counts[p["status"]] = counts.get(p["status"], 0) + 1
@@ -226,12 +246,16 @@ def _render_today_body(conn) -> tuple[str, str]:
         agency = s["agency_name"] or ""
         start = (s["start_ts"] or "")[11:16]
         end = (s["end_ts"] or "")[11:16]
+        # Filled count excludes cancellations -- those volunteers gave the
+        # slot back. Without this, "14/9 filled" gets rendered for shifts
+        # where 8 people have cancelled but Galaxy still has their rows.
+        filled = sum(c.get(k, 0) for k in checkin.FILLED_STATUSES)
         parts.append(f'<div class="shift"><h3><a href="/shift/{s["id"]}">{title}</a></h3>')
         parts.append(f'<div class="meta">{agency} · {start}–{end} · '
-                     f'{sum(c.values())}/{s["slots"]} filled</div>')
+                     f'{filled}/{s["slots"]} filled</div>')
         parts.append('<div class="bar">')
         for k in (checkin.CHECKED_IN, checkin.CHECKED_OUT, checkin.SIGNED_UP,
-                  checkin.NO_SHOW, checkin.MANAGER_ENTERED):
+                  checkin.NO_SHOW, checkin.MANAGER_ENTERED, checkin.CANCELLED):
             n = c.get(k, 0)
             if n:
                 parts.append(f"<span>{checkin.STATUS_EMOJI[k]} {n} {k.replace('_',' ')}</span>")
@@ -244,6 +268,7 @@ def _render_today_body(conn) -> tuple[str, str]:
                 if p["status"] == checkin.NO_SHOW:    tr_cls = " class='no-show'"
                 elif p["status"] == checkin.CHECKED_IN:  tr_cls = " class='checked-in'"
                 elif p["status"] == checkin.CHECKED_OUT: tr_cls = " class='checked-out'"
+                elif p["status"] == checkin.CANCELLED:   tr_cls = " class='cancelled'"
                 name_html = (f'<a href="/user/{p["user_id"]}">{p["name"]}</a>'
                              if p.get("user_id") else p["name"])
                 parts.append(
@@ -333,7 +358,7 @@ def shift_detail(shift_id: str,
         if not s:
             raise HTTPException(404, "shift not found")
         sgs = db.signups_for_shift(conn, shift_id)
-        people = [_row_for_signup(r, s["end_ts"]) for r in sgs]
+        people = [_row_for_signup(r, s["end_ts"], conn=conn) for r in sgs]
         hist = conn.execute(
             """SELECT status, observed_at FROM status_history
                WHERE shift_id = ? ORDER BY id DESC LIMIT 25""",
@@ -553,7 +578,10 @@ def _render_action_buttons(response_id: str, current_status: str,
         forms.append(_btn("clear", "Undo"))
     elif current_status == checkin.CHECKED_OUT:
         forms.append(_btn("clear", "Undo"))
-    elif current_status in (checkin.SIGNED_UP, checkin.NO_SHOW):
+    elif current_status in (checkin.SIGNED_UP, checkin.NO_SHOW, checkin.CANCELLED):
+        # CANCELLED gets the same buttons -- if a volunteer cancelled but
+        # then showed up anyway, the operator can still mark them in. The
+        # manual override beats the response_status='inactive' classification.
         forms.append(_btn("checkin", "Mark in"))
         forms.append(_btn("checkout", "Mark out"))
     else:
@@ -867,6 +895,6 @@ def api_today(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
                 "start": s["start_ts"],
                 "end": s["end_ts"],
                 "slots": s["slots"],
-                "people": [_row_for_signup(r, s["end_ts"]) for r in sgs],
+                "people": [_row_for_signup(r, s["end_ts"], conn=conn) for r in sgs],
             })
     return JSONResponse(out)

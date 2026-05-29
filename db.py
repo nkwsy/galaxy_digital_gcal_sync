@@ -480,12 +480,17 @@ def shifts_for_day(conn: sqlite3.Connection, day: datetime | None = None) -> lis
 
 
 def signups_for_shift(conn: sqlite3.Connection, shift_id: str) -> list[sqlite3.Row]:
-    """Return (signup x user x latest_hour) join for one shift."""
+    """Return (signup x user x latest_hour) join for one shift.
+
+    Carries `response_status` through so the renderer can distinguish
+    'inactive' (cancelled) from 'active' without a separate query.
+    """
     return conn.execute(
         """SELECT
               sg.id            AS response_id,
               u.id             AS user_id,
               u.fname, u.lname, u.email,
+              sg.response_status,
               h.classification, h.source, h.date_start, h.date_end,
               h.updated_at     AS hour_updated_at
            FROM signups sg

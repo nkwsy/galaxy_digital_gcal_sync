@@ -83,22 +83,22 @@ def collect(days_back: int = 1) -> dict:
         ).fetchall()
 
         out_shifts = []
-        totals = {checkin.SIGNED_UP: 0, checkin.CHECKED_IN: 0,
-                  checkin.CHECKED_OUT: 0, checkin.MANAGER_ENTERED: 0,
-                  checkin.NO_SHOW: 0}
+        totals = {k: 0 for k in (checkin.SIGNED_UP, checkin.CHECKED_IN,
+                                  checkin.CHECKED_OUT, checkin.MANAGER_ENTERED,
+                                  checkin.NO_SHOW, checkin.CANCELLED)}
+        # Resolve each signup's status through sync.current_status_for_signup
+        # so CANCELLED, manual overrides, and time-based no_show are all
+        # handled the same way the web UI uses them. Avoids subtle drift
+        # between what the digest shows and what's on the live page.
+        import sync as sync_mod
         for s in shifts:
             rows = db.signups_for_shift(conn, s["id"])
             people = []
-            counts = {checkin.SIGNED_UP: 0, checkin.CHECKED_IN: 0,
-                      checkin.CHECKED_OUT: 0, checkin.MANAGER_ENTERED: 0,
-                      checkin.NO_SHOW: 0}
+            counts = {k: 0 for k in totals}
             for r in rows:
-                status = r["classification"]
-                if not status:
-                    # No hour row -> signed_up unless shift ended.
-                    status = (checkin.NO_SHOW
-                              if s["end_ts"] and s["end_ts"] < now.strftime("%Y-%m-%d %H:%M:%S")
-                              else checkin.SIGNED_UP)
+                status = sync_mod.current_status_for_signup(
+                    conn, r["response_id"], r["user_id"], s["end_ts"],
+                )
                 counts[status] = counts.get(status, 0) + 1
                 totals[status] = totals.get(status, 0) + 1
                 people.append({
@@ -182,7 +182,7 @@ def render_html(data: dict) -> str:
     parts.append(f"<p class='meta'>Generated {data['generated_at']}</p>")
     parts.append("<div class='summary'>")
     for k in (checkin.SIGNED_UP, checkin.CHECKED_IN, checkin.CHECKED_OUT,
-              checkin.MANAGER_ENTERED, checkin.NO_SHOW):
+              checkin.MANAGER_ENTERED, checkin.NO_SHOW, checkin.CANCELLED):
         parts.append(f"<span>{checkin.STATUS_EMOJI[k]} <b>{t.get(k,0)}</b> {k.replace('_',' ')}</span>")
     parts.append("</div>")
 
@@ -192,11 +192,13 @@ def render_html(data: dict) -> str:
         c = s["counts"]
         parts.append("<div class='shift'>")
         parts.append(f"<h3>{s['title']}</h3>")
+        filled = sum(c.get(k, 0) for k in checkin.FILLED_STATUSES)
         parts.append(f"<div class='meta'>{s['agency']} · {s['date']} {s['start']}–{s['end']} · "
-                     f"{sum(c.values())}/{s['slots']} filled · "
-                     f"🟢 {c.get(checkin.CHECKED_IN,0)} in · "
-                     f"🔵 {c.get(checkin.CHECKED_OUT,0)} done · "
-                     f"🔴 {c.get(checkin.NO_SHOW,0)} no-show</div>")
+                     f"{filled}/{s['slots']} filled · "
+                     f"{checkin.STATUS_EMOJI[checkin.CHECKED_IN]} {c.get(checkin.CHECKED_IN,0)} in · "
+                     f"{checkin.STATUS_EMOJI[checkin.CHECKED_OUT]} {c.get(checkin.CHECKED_OUT,0)} done · "
+                     f"{checkin.STATUS_EMOJI[checkin.NO_SHOW]} {c.get(checkin.NO_SHOW,0)} no-show · "
+                     f"{checkin.STATUS_EMOJI[checkin.CANCELLED]} {c.get(checkin.CANCELLED,0)} cancelled</div>")
         if s["people"]:
             parts.append("<table><thead><tr><th></th><th>Volunteer</th><th>Email</th>"
                          "<th>In</th><th>Out</th></tr></thead><tbody>")
