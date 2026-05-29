@@ -254,7 +254,9 @@ class GalaxyAPI:
                     "title": s["title"],
                     "location": s["location"],
                     "users": users,
-                    "slots_filled": len(users),
+                    # Cancelled volunteers free their slot; don't count them.
+                    "slots_filled": sum(1 for u in users
+                                        if u.get("checkin_status") != checkin.CANCELLED),
                 })
 
         with open("transformed_responses.json", "w") as f:
@@ -344,7 +346,9 @@ class GalaxyAPI:
                         "title": s["title"],
                         "location": s["location"],
                         "users": users,
-                        "slots_filled": len(users),
+                        # Cancelled volunteers free their slot; don't count them.
+                    "slots_filled": sum(1 for u in users
+                                        if u.get("checkin_status") != checkin.CANCELLED),
                     })
 
             if len(shifts_to_update) > 0:

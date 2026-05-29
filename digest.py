@@ -61,11 +61,26 @@ def _checkout_time(row) -> str | None:
     return None
 
 
-def collect(days_back: int = 1) -> dict:
-    """Gather data for the digest. Returns a render-ready dict."""
-    now = datetime.now(CHICAGO)
-    start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
-    end_ts = now.strftime("%Y-%m-%d %H:%M:%S")
+def collect(days_back: int = 1, end: datetime | None = None) -> dict:
+    """Gather data for the digest. Returns a render-ready dict.
+
+    `end` is the inclusive last day; default is "now". When set, the
+    window becomes [end - days_back .. end + 1 day) -- so you can
+    re-render historical digests for any past week.
+    """
+    # Always normalize end_marker to end-of-its-day. Otherwise a digest
+    # generated at, say, 8 AM excludes the rest of today's shifts -- which
+    # is the wrong story for "today's report".
+    if end is None:
+        now = datetime.now(CHICAGO)
+        end_marker = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    else:
+        end_marker = end.replace(hour=23, minute=59, second=59, microsecond=0)
+        now = end_marker
+    start = (end_marker - timedelta(days=days_back)).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    end_ts = end_marker.strftime("%Y-%m-%d %H:%M:%S")
     start_ts = start.strftime("%Y-%m-%d %H:%M:%S")
 
     repeat_window = int(os.getenv("DIGEST_REPEAT_WINDOW", "30"))
@@ -83,25 +98,26 @@ def collect(days_back: int = 1) -> dict:
         ).fetchall()
 
         out_shifts = []
-        totals = {checkin.SIGNED_UP: 0, checkin.CHECKED_IN: 0,
-                  checkin.CHECKED_OUT: 0, checkin.MANAGER_ENTERED: 0,
-                  checkin.NO_SHOW: 0}
+        totals = {k: 0 for k in (checkin.SIGNED_UP, checkin.CHECKED_IN,
+                                  checkin.CHECKED_OUT, checkin.MANAGER_ENTERED,
+                                  checkin.NO_SHOW, checkin.CANCELLED)}
+        # Resolve each signup's status through sync.current_status_for_signup
+        # so CANCELLED, manual overrides, and time-based no_show are all
+        # handled the same way the web UI uses them. Avoids subtle drift
+        # between what the digest shows and what's on the live page.
+        import sync as sync_mod
         for s in shifts:
             rows = db.signups_for_shift(conn, s["id"])
             people = []
-            counts = {checkin.SIGNED_UP: 0, checkin.CHECKED_IN: 0,
-                      checkin.CHECKED_OUT: 0, checkin.MANAGER_ENTERED: 0,
-                      checkin.NO_SHOW: 0}
+            counts = {k: 0 for k in totals}
             for r in rows:
-                status = r["classification"]
-                if not status:
-                    # No hour row -> signed_up unless shift ended.
-                    status = (checkin.NO_SHOW
-                              if s["end_ts"] and s["end_ts"] < now.strftime("%Y-%m-%d %H:%M:%S")
-                              else checkin.SIGNED_UP)
+                status = sync_mod.current_status_for_signup(
+                    conn, r["response_id"], r["user_id"], s["end_ts"],
+                )
                 counts[status] = counts.get(status, 0) + 1
                 totals[status] = totals.get(status, 0) + 1
                 people.append({
+                    "user_id": r["user_id"],
                     "name": f"{r['fname'] or ''} {r['lname'] or ''}".strip(),
                     "email": r["email"] or "",
                     "status": status,
@@ -133,6 +149,7 @@ def collect(days_back: int = 1) -> dict:
         "repeat_window_days": repeat_window,
         "repeat_offenders": [
             {
+                "user_id": r["id"],
                 "name": f"{r['fname'] or ''} {r['lname'] or ''}".strip(),
                 "email": r["email"] or "",
                 "no_shows": r["no_shows"],
@@ -140,6 +157,16 @@ def collect(days_back: int = 1) -> dict:
             for r in offenders
         ],
     }
+
+
+def _user_link(user_id: str | None, name: str, base_url: str) -> str:
+    """Wrap a volunteer name in an absolute <a href> when WEB_PUBLIC_URL
+    is configured, plain text otherwise. The digest goes to email clients
+    that can't resolve a bare /user/{id} path, so we need the full URL.
+    """
+    if not user_id or not base_url:
+        return name
+    return f'<a href="{base_url.rstrip("/")}/user/{user_id}">{name}</a>'
 
 
 CSS = """
@@ -161,12 +188,16 @@ th, td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #eee; }
 
 def render_html(data: dict) -> str:
     t = data["totals"]
+    # WEB_PUBLIC_URL is what the digest uses to link names back to the
+    # live viewer. Without it (default), names render as plain text -- a
+    # localhost link would 404 for whoever opens the email.
+    base_url = (os.getenv("WEB_PUBLIC_URL") or "").strip().rstrip("/")
     parts = [f"<style>{CSS}</style>"]
     parts.append(f"<h1>Volunteer digest · {data['start_date']} → {data['end_date']}</h1>")
     parts.append(f"<p class='meta'>Generated {data['generated_at']}</p>")
     parts.append("<div class='summary'>")
     for k in (checkin.SIGNED_UP, checkin.CHECKED_IN, checkin.CHECKED_OUT,
-              checkin.MANAGER_ENTERED, checkin.NO_SHOW):
+              checkin.MANAGER_ENTERED, checkin.NO_SHOW, checkin.CANCELLED):
         parts.append(f"<span>{checkin.STATUS_EMOJI[k]} <b>{t.get(k,0)}</b> {k.replace('_',' ')}</span>")
     parts.append("</div>")
 
@@ -176,17 +207,20 @@ def render_html(data: dict) -> str:
         c = s["counts"]
         parts.append("<div class='shift'>")
         parts.append(f"<h3>{s['title']}</h3>")
+        filled = sum(c.get(k, 0) for k in checkin.FILLED_STATUSES)
         parts.append(f"<div class='meta'>{s['agency']} · {s['date']} {s['start']}–{s['end']} · "
-                     f"{sum(c.values())}/{s['slots']} filled · "
-                     f"🟢 {c.get(checkin.CHECKED_IN,0)} in · "
-                     f"🔵 {c.get(checkin.CHECKED_OUT,0)} done · "
-                     f"🔴 {c.get(checkin.NO_SHOW,0)} no-show</div>")
+                     f"{filled}/{s['slots']} filled · "
+                     f"{checkin.STATUS_EMOJI[checkin.CHECKED_IN]} {c.get(checkin.CHECKED_IN,0)} in · "
+                     f"{checkin.STATUS_EMOJI[checkin.CHECKED_OUT]} {c.get(checkin.CHECKED_OUT,0)} done · "
+                     f"{checkin.STATUS_EMOJI[checkin.NO_SHOW]} {c.get(checkin.NO_SHOW,0)} no-show · "
+                     f"{checkin.STATUS_EMOJI[checkin.CANCELLED]} {c.get(checkin.CANCELLED,0)} cancelled</div>")
         if s["people"]:
             parts.append("<table><thead><tr><th></th><th>Volunteer</th><th>Email</th>"
                          "<th>In</th><th>Out</th></tr></thead><tbody>")
             for p in s["people"]:
                 cls = " class='no-show'" if p["status"] == checkin.NO_SHOW else ""
-                parts.append(f"<tr{cls}><td>{p['emoji']}</td><td>{p['name']}</td>"
+                name_html = _user_link(p.get("user_id"), p["name"], base_url)
+                parts.append(f"<tr{cls}><td>{p['emoji']}</td><td>{name_html}</td>"
                              f"<td>{p['email']}</td>"
                              f"<td>{p['checkin_time'] or ''}</td>"
                              f"<td>{p['checkout_time'] or ''}</td></tr>")
@@ -198,7 +232,8 @@ def render_html(data: dict) -> str:
         parts.append("<table class='offenders'><thead><tr><th>Volunteer</th><th>Email</th>"
                      "<th>No-shows</th></tr></thead><tbody>")
         for o in data["repeat_offenders"]:
-            parts.append(f"<tr><td>{o['name']}</td><td>{o['email']}</td><td>{o['no_shows']}</td></tr>")
+            name_html = _user_link(o.get("user_id"), o["name"], base_url)
+            parts.append(f"<tr><td>{name_html}</td><td>{o['email']}</td><td>{o['no_shows']}</td></tr>")
         parts.append("</tbody></table>")
     else:
         parts.append("<p><em>None.</em></p>")

@@ -42,6 +42,8 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+from loguru import logger
+
 import checkin
 import db
 import digest as digest_mod
@@ -113,6 +115,8 @@ th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #f0f0f0; f
 tr.no-show { background: #fff4f4; }
 tr.checked-in { background: #fffbe6; }   /* 🟡 at the kiosk now */
 tr.checked-out { background: #f1faf2; }  /* 🟢 done for the day */
+tr.cancelled { color: #999; background: #f5f5f5; }    /* ⚪ un-registered */
+tr.cancelled td { text-decoration: line-through; }
 .empty { color: #888; font-style: italic; }
 """
 
@@ -163,10 +167,12 @@ def _layout(title: str, body: str, live: bool = False,
 <h1>Galaxy Digital · live</h1>
 <nav>
   <a href="/">Today</a>
+  <a href="/weekly">Weekly</a>
   <a href="/calendar">Calendar</a>
   <a href="/users">Find volunteer</a>
   <a href="/offenders">Repeat no-shows</a>
   <a href="/digest">Digest</a>
+  <a href="/emails">Emails</a>
 </nav>
 </header>
 {body}
@@ -175,14 +181,33 @@ def _layout(title: str, body: str, live: bool = False,
 </body></html>"""
 
 
-def _row_for_signup(sg, shift_end_ts: str | None) -> dict:
-    """Resolve display row for one (signup + maybe-hour) pair."""
-    status = sg["classification"]
-    if not status:
-        now_ct = datetime.now(CHICAGO).strftime("%Y-%m-%d %H:%M:%S")
-        status = checkin.NO_SHOW if shift_end_ts and shift_end_ts < now_ct else checkin.SIGNED_UP
+def _row_for_signup(sg, shift_end_ts: str | None, conn=None) -> dict:
+    """Resolve display row for one (signup + maybe-hour) pair.
+
+    When `conn` is provided we route status resolution through
+    sync.current_status_for_signup so manual overrides + cancellations
+    are honored. Falling back to classification-only when no conn is
+    handed in keeps the digest's offline rendering simple.
+    """
+    if conn is not None:
+        import sync as sync_mod
+        status = sync_mod.current_status_for_signup(
+            conn, sg["response_id"], sg["user_id"], shift_end_ts,
+        )
+    else:
+        status = sg["classification"]
+        if not status:
+            # response_status reflects cancellations even without a conn.
+            if (sg["response_status"] if "response_status" in sg.keys() else None) \
+                    and sg["response_status"] != "active":
+                status = checkin.CANCELLED
+            else:
+                now_ct = datetime.now(CHICAGO).strftime("%Y-%m-%d %H:%M:%S")
+                status = (checkin.NO_SHOW if shift_end_ts and shift_end_ts < now_ct
+                          else checkin.SIGNED_UP)
     src = (sg["source"] or "") if "source" in sg.keys() else ""
     return {
+        "user_id": sg["user_id"],
         "name": f"{sg['fname'] or ''} {sg['lname'] or ''}".strip(),
         "email": sg["email"] or "",
         "status": status,
@@ -192,19 +217,31 @@ def _row_for_signup(sg, shift_end_ts: str | None) -> dict:
     }
 
 
-def _render_today_body(conn) -> tuple[str, str]:
+def _parse_date(s: str | None) -> datetime | None:
+    """Accept YYYY-MM-DD and return a tz-aware Chicago-local datetime
+    at 00:00. Invalid / blank input -> None (caller defaults to today)."""
+    if not s:
+        return None
+    try:
+        d = datetime.strptime(s.strip(), "%Y-%m-%d")
+        return CHICAGO.localize(d)
+    except ValueError:
+        return None
+
+
+def _render_today_body(conn, day: datetime | None = None) -> tuple[str, str]:
     """Build the shifts fragment for today and a fingerprint over it.
 
     Returning the fingerprint alongside the HTML lets the SSE loop decide
     whether to push without having to diff strings -- the fingerprint
     covers the only things that actually affect what's displayed.
     """
-    shifts = db.shifts_for_day(conn)
+    shifts = db.shifts_for_day(conn, day=day)
     rendered = []
     fp_inputs: list[str] = []
     for s in shifts:
         sgs = db.signups_for_shift(conn, s["id"])
-        people = [_row_for_signup(r, s["end_ts"]) for r in sgs]
+        people = [_row_for_signup(r, s["end_ts"], conn=conn) for r in sgs]
         counts: dict[str, int] = {}
         for p in people:
             counts[p["status"]] = counts.get(p["status"], 0) + 1
@@ -217,7 +254,19 @@ def _render_today_body(conn) -> tuple[str, str]:
         body = "<p class='empty'>No shifts scheduled today.</p>"
         return body, hashlib.sha1(b"empty").hexdigest()
 
-    parts = ["<h2>Today's shifts</h2>"]
+    # Heading reflects whichever day was requested. Date picker lets the
+    # operator scroll back to past days; "Today" link resets it.
+    date_str = (day or datetime.now(CHICAGO)).strftime("%Y-%m-%d")
+    is_today = date_str == datetime.now(CHICAGO).strftime("%Y-%m-%d")
+    heading = "Today's shifts" if is_today else f"Shifts on {date_str}"
+    parts = [f"<h2>{heading}</h2>"]
+    parts.append(
+        '<form method="get" action="/" style="margin-bottom:1em">'
+        f'<input type="date" name="date" value="{date_str}"> '
+        '<button type="submit">Go</button> '
+        '<a href="/" style="margin-left:1em">today</a>'
+        '</form>'
+    )
     for blk in rendered:
         s = blk["shift"]
         c = blk["counts"]
@@ -225,12 +274,16 @@ def _render_today_body(conn) -> tuple[str, str]:
         agency = s["agency_name"] or ""
         start = (s["start_ts"] or "")[11:16]
         end = (s["end_ts"] or "")[11:16]
+        # Filled count excludes cancellations -- those volunteers gave the
+        # slot back. Without this, "14/9 filled" gets rendered for shifts
+        # where 8 people have cancelled but Galaxy still has their rows.
+        filled = sum(c.get(k, 0) for k in checkin.FILLED_STATUSES)
         parts.append(f'<div class="shift"><h3><a href="/shift/{s["id"]}">{title}</a></h3>')
         parts.append(f'<div class="meta">{agency} · {start}–{end} · '
-                     f'{sum(c.values())}/{s["slots"]} filled</div>')
+                     f'{filled}/{s["slots"]} filled</div>')
         parts.append('<div class="bar">')
         for k in (checkin.CHECKED_IN, checkin.CHECKED_OUT, checkin.SIGNED_UP,
-                  checkin.NO_SHOW, checkin.MANAGER_ENTERED):
+                  checkin.NO_SHOW, checkin.MANAGER_ENTERED, checkin.CANCELLED):
             n = c.get(k, 0)
             if n:
                 parts.append(f"<span>{checkin.STATUS_EMOJI[k]} {n} {k.replace('_',' ')}</span>")
@@ -243,9 +296,12 @@ def _render_today_body(conn) -> tuple[str, str]:
                 if p["status"] == checkin.NO_SHOW:    tr_cls = " class='no-show'"
                 elif p["status"] == checkin.CHECKED_IN:  tr_cls = " class='checked-in'"
                 elif p["status"] == checkin.CHECKED_OUT: tr_cls = " class='checked-out'"
+                elif p["status"] == checkin.CANCELLED:   tr_cls = " class='cancelled'"
+                name_html = (f'<a href="/user/{p["user_id"]}">{p["name"]}</a>'
+                             if p.get("user_id") else p["name"])
                 parts.append(
                     f"<tr{tr_cls}><td>{p['emoji']}</td>"
-                    f"<td>{p['name']}</td><td>{p['email']}</td>"
+                    f"<td>{name_html}</td><td>{p['email']}</td>"
                     f"<td>{(p['check_in'] or '')[11:16]}</td>"
                     f"<td>{(p['check_out'] or '')[11:16]}</td></tr>"
                 )
@@ -258,12 +314,19 @@ def _render_today_body(conn) -> tuple[str, str]:
 
 
 @app.get("/", response_class=HTMLResponse)
-def today(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
+def today(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+          date: str | None = None):
+    """Today by default; ?date=YYYY-MM-DD scrolls to that day. The SSE
+    stream stays on real-today only -- we don't want to push updates
+    for a historical date the operator is looking at.
+    """
+    day = _parse_date(date)
+    is_today = day is None
     with db.connect() as conn:
-        body, _fp = _render_today_body(conn)
-    # The body is wrapped in a container the SSE handler can target.
+        body, _fp = _render_today_body(conn, day=day)
     wrapped = f'<div id="shifts-container">{body}</div>'
-    return HTMLResponse(_layout("Today", wrapped, live=True))
+    # `live=True` only when viewing real-today; past dates don't auto-update.
+    return HTMLResponse(_layout("Today", wrapped, live=is_today))
 
 
 @app.get("/events")
@@ -330,23 +393,30 @@ def shift_detail(shift_id: str,
         if not s:
             raise HTTPException(404, "shift not found")
         sgs = db.signups_for_shift(conn, shift_id)
-        people = [_row_for_signup(r, s["end_ts"]) for r in sgs]
+        people = [_row_for_signup(r, s["end_ts"], conn=conn) for r in sgs]
         hist = conn.execute(
             """SELECT status, observed_at FROM status_history
                WHERE shift_id = ? ORDER BY id DESC LIMIT 25""",
             (shift_id,),
         ).fetchall()
 
+    # Cache template list for the email dropdown.
+    import emails as emails_mod
+    with db.connect() as _conn:
+        active_tmpls = [t for t in emails_mod.list_templates(_conn) if t["is_active"]]
+
     parts = [f'<h2>{s["title"] or "(no title)"}</h2>']
     parts.append(f'<div class="meta">{s["agency_name"] or ""} · '
                  f'{s["start_ts"]} → {s["end_ts"]} · slots={s["slots"]}</div>')
     parts.append('<table><thead><tr><th></th><th>Volunteer</th><th>Email</th>'
-                 '<th>Status</th><th>In</th><th>Out</th><th>Action</th></tr></thead><tbody>')
+                 '<th>Status</th><th>In</th><th>Out</th><th>Action</th>'
+                 '<th>Send email</th></tr></thead><tbody>')
     # Build {name -> (response_id, user_id)} so we can attach buttons +
     # link names through to the user-detail page. signups_for_shift
     # is already in DB-sort order.
     name_lookup = {f"{r['fname']} {r['lname']}".strip(): (r['response_id'], r['user_id'])
                    for r in sgs}
+    return_to = f"/shift/{shift_id}"
     for p in people:
         rid, uid = name_lookup.get(p['name'], ('', ''))
         name_html = (f'<a href="/user/{uid}">{p["name"]}</a>' if uid
@@ -355,7 +425,8 @@ def shift_detail(shift_id: str,
                      f"<td>{p['email']}</td>"
                      f"<td>{p['status']}</td><td>{p['check_in'] or ''}</td>"
                      f"<td>{p['check_out'] or ''}</td>"
-                     f"<td>{_render_action_buttons(rid, p['status'], shift_id)}</td></tr>")
+                     f"<td>{_render_action_buttons(rid, p['status'], shift_id)}</td>"
+                     f"<td>{_render_email_dropdown(rid, return_to, active_tmpls)}</td></tr>")
     parts.append('</tbody></table>')
     parts.append("<p class='meta' style='font-size:0.85em'>"
                  "Buttons write status locally and propagate to Google "
@@ -526,6 +597,25 @@ def _write_manual_status(response_id: str, action: str) -> str:
         return status
 
 
+def _render_email_dropdown(response_id: str, return_to: str,
+                            tmpls: list[dict]) -> str:
+    """Inline form: pick a template, click send. Renders nothing if no
+    active templates exist -- avoids dead UI on a fresh deploy.
+    """
+    actives = [t for t in tmpls if t["is_active"]]
+    if not actives or not response_id:
+        return ""
+    options = "".join(f'<option value="{t["id"]}">{t["name"]}</option>' for t in actives)
+    return (
+        f'<form method="post" action="/action/send_email" '
+        f'style="display:inline;margin:0 2px">'
+        f'<input type="hidden" name="response_id" value="{response_id}">'
+        f'<input type="hidden" name="return_to" value="{return_to}">'
+        f'<select name="template_id" style="max-width:14em">{options}</select>'
+        f'<button type="submit" style="margin-left:2px">📧 Send</button></form>'
+    )
+
+
 def _render_action_buttons(response_id: str, current_status: str,
                             shift_id: str) -> str:
     """Two/three inline POST forms next to a volunteer row.
@@ -550,7 +640,10 @@ def _render_action_buttons(response_id: str, current_status: str,
         forms.append(_btn("clear", "Undo"))
     elif current_status == checkin.CHECKED_OUT:
         forms.append(_btn("clear", "Undo"))
-    elif current_status in (checkin.SIGNED_UP, checkin.NO_SHOW):
+    elif current_status in (checkin.SIGNED_UP, checkin.NO_SHOW, checkin.CANCELLED):
+        # CANCELLED gets the same buttons -- if a volunteer cancelled but
+        # then showed up anyway, the operator can still mark them in. The
+        # manual override beats the response_status='inactive' classification.
         forms.append(_btn("checkin", "Mark in"))
         forms.append(_btn("checkout", "Mark out"))
     else:
@@ -664,10 +757,374 @@ def offenders(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
 
 
 @app.get("/digest", response_class=HTMLResponse)
-def view_digest(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)], days: int = 1):
-    data = digest_mod.collect(days_back=days)
+def view_digest(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+                days: int = 1, end: str | None = None):
+    """Digest for the last `days` days ending on `end` (default: today).
+
+    Examples:
+        /digest                       -> yesterday->today
+        /digest?days=7                -> last 7 days
+        /digest?days=1&end=2026-05-19 -> just May 19
+        /digest?days=7&end=2026-05-19 -> May 13->May 19
+    """
+    end_dt = _parse_date(end)
+    data = digest_mod.collect(days_back=days, end=end_dt)
     html = digest_mod.render_html(data)
-    return HTMLResponse(_layout("Digest preview", html, live=False))
+    today_iso = datetime.now(CHICAGO).strftime("%Y-%m-%d")
+    end_iso = (end_dt or datetime.now(CHICAGO)).strftime("%Y-%m-%d")
+    form = (
+        '<form method="get" action="/digest" style="margin-bottom:1em">'
+        '<label>Days back: <input type="number" name="days" min="1" max="60" '
+        f'value="{days}" style="width:5em"></label>'
+        '<label style="margin-left:1em">End date: '
+        f'<input type="date" name="end" value="{end_iso}"></label> '
+        '<button type="submit" style="margin-left:1em">Go</button> '
+        f'<a href="/digest?days=1" style="margin-left:1em">reset to today</a>'
+        '</form>'
+    )
+    return HTMLResponse(_layout("Digest preview", form + html, live=False))
+
+
+def _ensure_starter_templates() -> None:
+    """Seed the 3 starter templates the first time the operator opens
+    /emails. Idempotent -- a no-op once any template exists.
+    """
+    import emails as emails_mod
+    db.init()
+    with db.connect() as conn:
+        n = emails_mod.seed_starter_templates(conn)
+        if n:
+            logger.info(f"seeded {n} starter email templates")
+
+
+@app.get("/emails", response_class=HTMLResponse)
+def emails_list(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
+    import emails as emails_mod
+    _ensure_starter_templates()
+    with db.connect() as conn:
+        tmpls = emails_mod.list_templates(conn)
+        recent = conn.execute(
+            "SELECT s.sent_at, s.to_email, s.subject, s.success, s.error, "
+            "       s.triggered_by, t.name AS template_name "
+            "FROM email_sends s LEFT JOIN email_templates t ON t.id=s.template_id "
+            "ORDER BY s.id DESC LIMIT 25"
+        ).fetchall()
+
+    parts = ["<h2>Email templates</h2>",
+             "<p class='meta'>Subject and body support <code>{{volunteer_first}}</code>, "
+             "<code>{{shift_title}}</code>, <code>{{shift_when}}</code>, "
+             "<code>{{shift_location}}</code>, <code>{{agency_name}}</code>, "
+             "<code>{{status}}</code>, <code>{{user_page_url}}</code>, "
+             "<code>{{org_name}}</code>, and similar names. "
+             "Unknown variables are left literal.</p>"]
+    parts.append(
+        '<p><a href="/emails/new"><button type="button">New template</button></a></p>'
+    )
+    if not tmpls:
+        parts.append("<p class='empty'>No templates yet.</p>")
+    else:
+        parts.append('<table><thead><tr><th>Name</th><th>Subject</th>'
+                     '<th>Auto-trigger</th><th>Active</th><th></th>'
+                     '</tr></thead><tbody>')
+        for t in tmpls:
+            trig = t["auto_trigger"] or "manual only"
+            active = "yes" if t["is_active"] else "no"
+            parts.append(
+                f"<tr><td><a href='/emails/{t['id']}'>{t['name']}</a></td>"
+                f"<td>{t['subject']}</td>"
+                f"<td>{trig}</td>"
+                f"<td>{active}</td>"
+                f"<td><a href='/emails/{t['id']}'>edit</a></td></tr>"
+            )
+        parts.append('</tbody></table>')
+
+    parts.append("<h3>Recent sends</h3>")
+    if not recent:
+        parts.append("<p class='empty'>Nothing sent yet.</p>")
+    else:
+        parts.append('<table><thead><tr><th>When (UTC)</th><th>Template</th>'
+                     '<th>To</th><th>Subject</th><th>Trigger</th><th>Result</th>'
+                     '</tr></thead><tbody>')
+        for s in recent:
+            outcome = ("✅" if s["success"] else f"❌ {s['error'] or ''}")
+            parts.append(
+                f"<tr><td>{(s['sent_at'] or '')[:16]}</td>"
+                f"<td>{s['template_name'] or '(deleted)'}</td>"
+                f"<td>{s['to_email']}</td>"
+                f"<td>{s['subject']}</td>"
+                f"<td>{s['triggered_by']}</td>"
+                f"<td>{outcome}</td></tr>"
+            )
+        parts.append('</tbody></table>')
+    return HTMLResponse(_layout("Emails", "\n".join(parts)))
+
+
+@app.get("/emails/new", response_class=HTMLResponse)
+def emails_new(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
+    return HTMLResponse(_layout("New template", _render_template_form(None)))
+
+
+@app.get("/emails/{tid}", response_class=HTMLResponse)
+def emails_edit(tid: int,
+                _: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
+    import emails as emails_mod
+    with db.connect() as conn:
+        t = emails_mod.get_template(conn, tid)
+    if not t:
+        raise HTTPException(404, "template not found")
+    return HTMLResponse(_layout(f"Edit · {t['name']}",
+                                _render_template_form(t)))
+
+
+def _render_template_form(t: dict | None) -> str:
+    import emails as emails_mod
+    is_new = t is None
+    t = t or {"name": "", "subject": "", "body": "", "auto_trigger": "",
+              "is_active": 1, "id": 0}
+    trigger_opts = "".join(
+        f'<option value="{v}"{" selected" if t["auto_trigger"]==v else ""}>{label}</option>'
+        for v, label in emails_mod.AUTO_TRIGGERS
+    )
+    active_checked = "checked" if t["is_active"] else ""
+    delete_btn = ""
+    if not is_new:
+        delete_btn = (
+            f'<form method="post" action="/emails/{t["id"]}/delete" '
+            f'style="display:inline;margin-left:1em" '
+            'onsubmit="return confirm(\'Delete this template?\')">'
+            '<button type="submit" style="color:#a00">Delete</button></form>'
+        )
+    return f"""
+<h2>{'New template' if is_new else 'Edit template'}</h2>
+<form method="post" action="/emails/save">
+  <input type="hidden" name="tid" value="{t['id']}">
+  <p><label>Name<br>
+    <input type="text" name="name" required value="{t['name']}"
+           style="width:60%;padding:6px"></label></p>
+  <p><label>Subject<br>
+    <input type="text" name="subject" required value="{t['subject']}"
+           style="width:80%;padding:6px"></label></p>
+  <p><label>Body (HTML allowed; use &lcub;&lcub;variable&rcub;&rcub; for substitution)<br>
+    <textarea name="body" rows="14" required
+              style="width:80%;padding:6px;font-family:monospace">{t['body']}</textarea>
+  </label></p>
+  <p><label>Auto-trigger
+    <select name="auto_trigger">{trigger_opts}</select></label></p>
+  <p><label><input type="checkbox" name="is_active" value="1" {active_checked}>
+    Active (uncheck to pause auto-sends)</label></p>
+  <p><button type="submit">Save</button>
+     <a href="/emails" style="margin-left:1em">cancel</a>
+     {delete_btn}</p>
+</form>
+"""
+
+
+@app.post("/emails/save")
+def emails_save(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+                tid: Annotated[int, Form()],
+                name: Annotated[str, Form()],
+                subject: Annotated[str, Form()],
+                body: Annotated[str, Form()],
+                auto_trigger: Annotated[str, Form()] = "",
+                is_active: Annotated[str | None, Form()] = None):
+    import emails as emails_mod
+    with db.connect() as conn:
+        emails_mod.save_template(
+            conn, name=name, subject=subject, body=body,
+            auto_trigger=auto_trigger, is_active=1 if is_active else 0,
+            tid=tid if tid else None,
+        )
+    return RedirectResponse("/emails", status_code=303)
+
+
+@app.post("/emails/{tid}/delete")
+def emails_delete(tid: int,
+                  _: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
+    import emails as emails_mod
+    with db.connect() as conn:
+        emails_mod.delete_template(conn, tid)
+    return RedirectResponse("/emails", status_code=303)
+
+
+@app.post("/action/send_email")
+def action_send_email(
+    _: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+    template_id: Annotated[int, Form()],
+    response_id: Annotated[str, Form()],
+    return_to: Annotated[str, Form()] = "/",
+):
+    import emails as emails_mod
+    with db.connect() as conn:
+        result = emails_mod.send_template(conn, template_id, response_id,
+                                          triggered_by="manual")
+    logger.info(f"manual email send: tmpl={template_id} rid={response_id} "
+                f"ok={result['ok']} err={result.get('error')}")
+    return RedirectResponse(return_to, status_code=303)
+
+
+@app.get("/weekly", response_class=HTMLResponse)
+def view_weekly(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)],
+                start: str | None = None):
+    """Weekly digest with rolled-up intelligence.
+
+    Window: the ISO week containing `start` (default this week, CT).
+    Buckets:
+      - per-day shift count + attendance summary
+      - top volunteers by hours that week
+      - under-filled shifts (filled < 50% of slots)
+      - cancellation rate per need
+      - top no-show offenders that week
+    """
+    start_dt = _parse_date(start) or datetime.now(CHICAGO)
+    # Roll to Monday-of-week.
+    week_start = (start_dt - timedelta(days=start_dt.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    week_end = week_start + timedelta(days=7)
+    ws = week_start.strftime("%Y-%m-%d %H:%M:%S")
+    we = week_end.strftime("%Y-%m-%d %H:%M:%S")
+
+    with db.connect() as conn:
+        shifts = conn.execute(
+            """SELECT s.id, s.start_ts, s.end_ts, s.slots, s.duration_min,
+                      n.title, n.agency_name
+               FROM shifts s LEFT JOIN needs n ON n.id = s.need_id
+               WHERE s.start_ts >= ? AND s.start_ts < ?
+               ORDER BY s.start_ts
+            """,
+            (ws, we),
+        ).fetchall()
+        # Resolve every status, accumulate stats.
+        import sync as sync_mod
+        status_totals: dict[str, int] = {k: 0 for k in (
+            checkin.SIGNED_UP, checkin.CHECKED_IN, checkin.CHECKED_OUT,
+            checkin.MANAGER_ENTERED, checkin.NO_SHOW, checkin.CANCELLED,
+        )}
+        # under-filled shifts (filled < 50% of slots after cancellations)
+        underfilled = []
+        # hours per user (counted from successful checkouts)
+        hours_per_user: dict[str, dict] = {}
+        # cancellations per need
+        cancel_by_need: dict[str, dict] = {}
+        # noshow offenders this week
+        noshow_per_user: dict[str, dict] = {}
+
+        for s in shifts:
+            sgs = db.signups_for_shift(conn, s["id"])
+            counts = {k: 0 for k in status_totals}
+            for sg in sgs:
+                st = sync_mod.current_status_for_signup(
+                    conn, sg["response_id"], sg["user_id"], s["end_ts"],
+                )
+                counts[st] = counts.get(st, 0) + 1
+                status_totals[st] = status_totals.get(st, 0) + 1
+                user_label = f"{sg['fname'] or ''} {sg['lname'] or ''}".strip()
+                if st in (checkin.CHECKED_OUT, checkin.MANAGER_ENTERED):
+                    bucket = hours_per_user.setdefault(
+                        sg["user_id"], {"name": user_label, "hours": 0.0, "shifts": 0}
+                    )
+                    bucket["hours"] += (s["duration_min"] or 0) / 60.0
+                    bucket["shifts"] += 1
+                elif st == checkin.NO_SHOW:
+                    bucket = noshow_per_user.setdefault(
+                        sg["user_id"], {"name": user_label, "n": 0}
+                    )
+                    bucket["n"] += 1
+                elif st == checkin.CANCELLED:
+                    title = s["title"] or "(no title)"
+                    bucket = cancel_by_need.setdefault(
+                        title, {"cancellations": 0, "total": 0},
+                    )
+                    bucket["cancellations"] += 1
+            # Per-need denominator for cancellation rate
+            title = s["title"] or "(no title)"
+            cancel_by_need.setdefault(title, {"cancellations": 0, "total": 0})["total"] += len(sgs)
+
+            filled = sum(counts.get(k, 0) for k in checkin.FILLED_STATUSES)
+            slots = s["slots"] or 0
+            if slots and filled < slots * 0.5:
+                underfilled.append({
+                    "title": s["title"] or "(no title)",
+                    "when": (s["start_ts"] or "")[:16],
+                    "filled": filled, "slots": slots,
+                })
+
+    parts = [f"<h2>Week of {week_start.strftime('%a %b %-d')} "
+             f"– {(week_end - timedelta(days=1)).strftime('%a %b %-d, %Y')}</h2>"]
+    prev_iso = (week_start - timedelta(days=7)).strftime("%Y-%m-%d")
+    next_iso = (week_start + timedelta(days=7)).strftime("%Y-%m-%d")
+    parts.append(
+        f'<p class="meta"><a href="/weekly?start={prev_iso}">&laquo; previous week</a> · '
+        f'<a href="/weekly">this week</a> · '
+        f'<a href="/weekly?start={next_iso}">next week &raquo;</a></p>'
+    )
+    parts.append("<div class='summary'>")
+    parts.append(f"<span><b>{len(shifts)}</b> shifts</span>")
+    for k in (checkin.CHECKED_OUT, checkin.CHECKED_IN, checkin.SIGNED_UP,
+              checkin.NO_SHOW, checkin.CANCELLED, checkin.MANAGER_ENTERED):
+        n = status_totals.get(k, 0)
+        if n:
+            parts.append(f"<span>{checkin.STATUS_EMOJI[k]} <b>{n}</b> {k.replace('_',' ')}</span>")
+    parts.append("</div>")
+
+    # Top volunteers by hours
+    top_vols = sorted(hours_per_user.values(), key=lambda x: x["hours"], reverse=True)[:10]
+    parts.append("<h3>Top volunteers by hours</h3>")
+    if not top_vols:
+        parts.append("<p class='empty'>No completed shifts this week.</p>")
+    else:
+        parts.append('<table><thead><tr><th>Volunteer</th><th>Hours</th>'
+                     '<th>Shifts</th></tr></thead><tbody>')
+        for v in top_vols:
+            parts.append(f"<tr><td>{v['name']}</td>"
+                         f"<td>{v['hours']:.1f}</td>"
+                         f"<td>{v['shifts']}</td></tr>")
+        parts.append('</tbody></table>')
+
+    # Cancellation rate by need
+    parts.append("<h3>Cancellation rate by need</h3>")
+    cancel_rows = sorted(
+        ((title, b["cancellations"], b["total"]) for title, b in cancel_by_need.items()),
+        key=lambda r: (r[1] / r[2] if r[2] else 0), reverse=True,
+    )[:10]
+    if not cancel_rows:
+        parts.append("<p class='empty'>No data.</p>")
+    else:
+        parts.append('<table><thead><tr><th>Need</th><th>Cancellations</th>'
+                     '<th>Total signups</th><th>Rate</th></tr></thead><tbody>')
+        for title, c, t in cancel_rows:
+            rate = f"{(100*c/t):.0f}%" if t else "—"
+            parts.append(f"<tr><td>{title}</td><td>{c}</td>"
+                         f"<td>{t}</td><td>{rate}</td></tr>")
+        parts.append('</tbody></table>')
+
+    # Under-filled shifts
+    parts.append("<h3>Under-filled shifts (&lt;50% of slots)</h3>")
+    if not underfilled:
+        parts.append("<p class='empty'>None.</p>")
+    else:
+        parts.append('<table><thead><tr><th>When</th><th>Shift</th>'
+                     '<th>Filled</th></tr></thead><tbody>')
+        for u in underfilled:
+            parts.append(f"<tr><td>{u['when']}</td><td>{u['title']}</td>"
+                         f"<td>{u['filled']}/{u['slots']}</td></tr>")
+        parts.append('</tbody></table>')
+
+    # No-shows this week
+    parts.append("<h3>No-shows this week</h3>")
+    top_noshow = sorted(noshow_per_user.items(),
+                        key=lambda kv: kv[1]["n"], reverse=True)[:10]
+    if not top_noshow:
+        parts.append("<p class='empty'>None. 🎉</p>")
+    else:
+        parts.append('<table><thead><tr><th>Volunteer</th><th>No-shows</th>'
+                     '</tr></thead><tbody>')
+        for uid, v in top_noshow:
+            parts.append(f"<tr><td><a href='/user/{uid}'>{v['name']}</a></td>"
+                         f"<td>{v['n']}</td></tr>")
+        parts.append('</tbody></table>')
+
+    return HTMLResponse(_layout("Weekly digest", "\n".join(parts)))
 
 
 @app.get("/user/{user_id}", response_class=HTMLResponse)
@@ -864,6 +1321,6 @@ def api_today(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
                 "start": s["start_ts"],
                 "end": s["end_ts"],
                 "slots": s["slots"],
-                "people": [_row_for_signup(r, s["end_ts"]) for r in sgs],
+                "people": [_row_for_signup(r, s["end_ts"], conn=conn) for r in sgs],
             })
     return JSONResponse(out)

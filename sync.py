@@ -100,15 +100,23 @@ def sync_responses(api) -> int:
     """
     db.init()
     sync_needs(api)
-    rows = api.get_data_from_api("responses") or []
+    # show_inactive=Yes is required to see CANCELLATIONS. Without it,
+    # Galaxy filters response_status='inactive' rows server-side -- so a
+    # volunteer who unregisters disappears from our view entirely and
+    # stays stuck on response_status='active' from the original signup.
+    # Then mark_no_shows looks at them and flags them as NO_SHOW, which
+    # is the wrong story.
+    rows = api.get_data_from_api("responses", {"show_inactive": "Yes"}) or []
     with db.connect() as conn:
         conn.execute("BEGIN")
         for r in rows:
             db.ingest_response(conn, r)
+        n_cleaned = _cleanup_stale_no_shows(conn)
         n_ns = mark_no_shows(conn)
         db.set_state(conn, "last_responses_sync_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"))
         conn.execute("COMMIT")
-    logger.info(f"sync_responses ingested {len(rows)} rows; {n_ns} new no-shows")
+    logger.info(f"sync_responses ingested {len(rows)} rows; "
+                f"cleaned {n_cleaned} stale no-shows; {n_ns} new no-shows")
     return len(rows)
 
 
@@ -146,6 +154,26 @@ def sync_hours(api, since: datetime | None = None) -> int:
         conn.execute("COMMIT")
     logger.info(f"sync_hours ingested {len(rows)} rows since {since_str}")
     return len(rows)
+
+
+def _cleanup_stale_no_shows(conn) -> int:
+    """Delete status_history NO_SHOW entries for signups that we now know
+    are cancellations.
+
+    Before show_inactive=Yes landed, mark_no_shows happily stamped these
+    as no-shows because Galaxy was hiding the inactive status from us.
+    After the sync now pulls inactive rows, the signups table has the
+    truth -- propagate that to history so /offenders and the digest don't
+    keep showing cancellations as offenses.
+    """
+    n = conn.execute(
+        """DELETE FROM status_history
+           WHERE status = ?
+             AND response_id IN (SELECT id FROM signups WHERE response_status = 'inactive')
+        """,
+        (checkin.NO_SHOW,),
+    ).rowcount
+    return n
 
 
 def mark_no_shows(conn) -> int:
@@ -200,16 +228,25 @@ def current_status_for_signup(conn, response_id: str, user_id: str, shift_end: s
     """Resolve the live status for one signup, with the no-show / signed-up
     distinction made from the shift end-time.
 
-    Manual overrides (from the web "Mark in" / "Mark out" buttons) win
-    over any /hours data we synced from Galaxy. This is the linchpin of
-    B2-prime: by sourcing the canonical status from manual_overrides
-    when present, the UI/calendar never flicker between 🟡 (kiosk) and
-    🟣 (manager-entered via /api/) when the same operator clicks the
-    button and we round-trip through Galaxy's /hours endpoint.
+    Resolution order:
+      1. Manual override (web buttons win over everything).
+      2. response_status='inactive' -> CANCELLED. Galaxy marks cancellations
+         this way; if the volunteer also has hour rows (they showed up after
+         cancelling -- rare but possible), the operator should use the
+         "Mark in" button to override, which falls through resolution 1.
+      3. Latest hour row classification -- checked_in/out/manager_entered.
+      4. Time-based -- signed_up if shift in future, no_show otherwise.
     """
     ov = db.get_override(conn, response_id)
     if ov:
         return ov["status"]
+
+    sg = conn.execute(
+        "SELECT response_status FROM signups WHERE id = ?",
+        (response_id,),
+    ).fetchone()
+    if sg and sg["response_status"] and sg["response_status"] != "active":
+        return checkin.CANCELLED
 
     row = conn.execute(
         "SELECT classification FROM hours WHERE response_id = ? "
