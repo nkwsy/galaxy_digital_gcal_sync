@@ -64,9 +64,22 @@ async def _lifespan(app):
     when the operator hits / before run_cal_update.py has done its first
     ingest. The tables will be empty until then -- but empty is renderable.
 
+    Also seeds the three starter email templates so the "Send email"
+    dropdown on /shift/{id} has something to offer immediately. Without
+    this, the dropdown was empty unless the operator happened to visit
+    /emails first (where the seed was originally wired).
+
     Uses the modern lifespan API rather than the deprecated on_event hook.
     """
     db.init()
+    try:
+        import emails as emails_mod
+        with db.connect() as conn:
+            n = emails_mod.seed_starter_templates(conn)
+            if n:
+                logger.info(f"seeded {n} starter email templates on startup")
+    except Exception as e:
+        logger.warning(f"starter-template seed at startup failed (non-fatal): {e}")
     yield
 
 
@@ -810,13 +823,28 @@ def emails_list(_: Annotated[HTTPBasicCredentials, Depends(_require_auth)]):
             "ORDER BY s.id DESC LIMIT 25"
         ).fetchall()
 
-    parts = ["<h2>Email templates</h2>",
-             "<p class='meta'>Subject and body support <code>{{volunteer_first}}</code>, "
-             "<code>{{shift_title}}</code>, <code>{{shift_when}}</code>, "
-             "<code>{{shift_location}}</code>, <code>{{agency_name}}</code>, "
-             "<code>{{status}}</code>, <code>{{user_page_url}}</code>, "
-             "<code>{{org_name}}</code>, and similar names. "
-             "Unknown variables are left literal.</p>"]
+    parts = ["<h2>Email templates</h2>"]
+    # Surface SMTP / dry-run state so the operator knows why a "successful"
+    # send might not have actually arrived in the recipient's inbox.
+    smtp_host = (os.getenv("SMTP_HOST") or "").strip()
+    dry_run = os.getenv("EMAIL_DRY_RUN", "").lower() in ("yes", "1", "true")
+    auto_on = os.getenv("AUTO_EMAILS_ENABLED", "").lower() in ("yes", "1", "true")
+    state_bits = []
+    if not smtp_host:
+        state_bits.append('<b style="color:#a00">SMTP_HOST not set</b> — sends will fail. Configure SMTP_HOST/USER/PASS in .env.')
+    elif dry_run:
+        state_bits.append(f'<b style="color:#a60">DRY-RUN mode</b> — sends render and log to <code>email_sends</code> but no email actually leaves the box. Unset EMAIL_DRY_RUN in .env to go live.')
+    else:
+        state_bits.append(f'SMTP host: <code>{smtp_host}</code>')
+    state_bits.append(f'Auto-triggers: <b>{"on" if auto_on else "off"}</b> (AUTO_EMAILS_ENABLED)')
+    parts.append(f'<div class="meta" style="background:#f4f6f9;padding:8px 12px;border-radius:6px">'
+                 + ' · '.join(state_bits) + '</div>')
+    parts.append("<p class='meta'>Subject and body support <code>{{volunteer_first}}</code>, "
+                 "<code>{{shift_title}}</code>, <code>{{shift_when}}</code>, "
+                 "<code>{{shift_location}}</code>, <code>{{agency_name}}</code>, "
+                 "<code>{{status}}</code>, <code>{{user_page_url}}</code>, "
+                 "<code>{{org_name}}</code>, and similar names. "
+                 "Unknown variables are left literal.</p>")
     parts.append(
         '<p><a href="/emails/new"><button type="button">New template</button></a></p>'
     )
