@@ -224,6 +224,46 @@ def mark_no_shows(conn) -> int:
     return written
 
 
+def build_shift_roster(conn, shift_row) -> dict:
+    """Build the dict shape gcal.update_calendar_events expects from a
+    SQLite shift row + its signups.
+
+    Returns: id, start_time, end_time, need_id, duration, slots, title,
+    location, users (list of dicts), slots_filled (excludes cancelled).
+
+    Status for each user goes through current_status_for_signup so
+    cancellations end up as CANCELLED (not signed_up / no_show) and
+    don't inflate the filled count.
+    """
+    from datetime import datetime as _dt
+    users = []
+    for sg in db.signups_for_shift(conn, shift_row["id"]):
+        status = current_status_for_signup(
+            conn, sg["response_id"], sg["user_id"], shift_row["end_ts"],
+        )
+        users.append({
+            "id": sg["user_id"],
+            "response_id": sg["response_id"],
+            "user_fname": sg["fname"],
+            "user_lname": sg["lname"],
+            "user_email": sg["email"],
+            "checkin_status": status,
+        })
+    return {
+        "id": shift_row["id"],
+        "start_time": _dt.strptime(shift_row["start_ts"], "%Y-%m-%d %H:%M:%S"),
+        "end_time":   _dt.strptime(shift_row["end_ts"],   "%Y-%m-%d %H:%M:%S"),
+        "need_id":    shift_row["need_id"] if "need_id" in shift_row.keys() else None,
+        "duration":   shift_row["duration_min"] if "duration_min" in shift_row.keys() else None,
+        "slots":      shift_row["slots"],
+        "title":      shift_row["title"] if "title" in shift_row.keys() else None,
+        "location":   shift_row["location"] if "location" in shift_row.keys() else None,
+        "users": users,
+        "slots_filled": sum(1 for u in users
+                            if u["checkin_status"] != checkin.CANCELLED),
+    }
+
+
 def current_status_for_signup(conn, response_id: str, user_id: str, shift_end: str | None) -> str:
     """Resolve the live status for one signup, with the no-show / signed-up
     distinction made from the shift end-time.

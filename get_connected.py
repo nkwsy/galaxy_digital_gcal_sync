@@ -221,22 +221,13 @@ class GalaxyAPI:
                 """,
             ).fetchall()
             for s in shifts:
-                signups = db.signups_for_shift(conn, s["id"])
-                users = []
-                for sg in signups:
-                    users.append({
-                        "id": sg["user_id"],
-                        "response_id": sg["response_id"],
-                        "user_fname": sg["fname"],
-                        "user_lname": sg["lname"],
-                        "user_email": sg["email"],
-                        "checkin_status": sg["classification"] or checkin.SIGNED_UP,
-                    })
+                roster = sync.build_shift_roster(conn, s)
                 # Fingerprint = (slot count, location, user statuses).
                 fp_input = "|".join([
-                    str(s["slots"] or ""),
-                    s["location"] or "",
-                    ",".join(sorted(f"{u['response_id']}:{u['checkin_status']}" for u in users)),
+                    str(roster["slots"] or ""),
+                    roster["location"] or "",
+                    ",".join(sorted(f"{u['response_id']}:{u['checkin_status']}"
+                                    for u in roster["users"])),
                 ])
                 fp = hashlib.sha1(fp_input.encode()).hexdigest()
                 key = f"gcal_fp:{s['id']}"
@@ -244,20 +235,7 @@ class GalaxyAPI:
                 if prev_fp == fp:
                     continue
                 db.set_state(conn, key, fp)
-                tr.append({
-                    "id": s["id"],
-                    "start_time": datetime.strptime(s["start_ts"], "%Y-%m-%d %H:%M:%S"),
-                    "end_time": datetime.strptime(s["end_ts"], "%Y-%m-%d %H:%M:%S"),
-                    "need_id": s["need_id"],
-                    "duration": s["duration_min"],
-                    "slots": s["slots"],
-                    "title": s["title"],
-                    "location": s["location"],
-                    "users": users,
-                    # Cancelled volunteers free their slot; don't count them.
-                    "slots_filled": sum(1 for u in users
-                                        if u.get("checkin_status") != checkin.CANCELLED),
-                })
+                tr.append(roster)
 
         with open("transformed_responses.json", "w") as f:
             json.dump(tr, f, default=str)
